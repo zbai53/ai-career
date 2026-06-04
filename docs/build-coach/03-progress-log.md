@@ -5,4 +5,14 @@
 
 ---
 
-*No entries yet. Start your first `checkin` to begin.*
+## Day 1 — 2025-06-04 (Phase 0: Environment Setup)
+
+**Completed:**
+- Created GitHub repo `ai-career` (monorepo)
+- Pushed root commit with `.gitignore`, `LICENSE`, `.editorconfig`, `README.md`, `.env.example`
+- Set up `docs/build-coach/` with all 5 project docs
+- Created placeholder dirs for `backend/`, `agent-service/`, `frontend/`, `docs/schemas/`, `docs/evaluation/`
+
+**Blockers:** None
+
+**Next:** Day 2 — Initialize Spring Boot, FastAPI, and React projects with `/health` endpoints
