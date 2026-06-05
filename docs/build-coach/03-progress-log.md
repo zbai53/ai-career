@@ -5,6 +5,22 @@
 
 ---
 
+## Day 3 — 2025-06-05 (Phase 0: Environment Setup)
+
+**Completed:**
+- Created docker-compose.yml with PostgreSQL 16, Redis 7, Qdrant v1.9.4
+- Removed temporary auto-config exclusions, Spring Boot now connects to real DB and Redis
+- Added Flyway V1 migration (app_health_check table)
+- Implemented cross-service health check: GET /health/agent (Spring Boot → Python)
+- Implemented LLM health check: GET /health/llm (Python → Claude API)
+- Verified full communication chain: Frontend → Spring Boot → Python → Claude API
+
+**Blockers:** application.yml password default mismatch (fixed)
+
+**Next:** Day 4 — Design Resume and JD JSON schemas (Pydantic models), start Phase 1
+
+---
+
 ## Day 2 — 2025-06-05 (Phase 0: Environment Setup)
 
 **Completed:**
