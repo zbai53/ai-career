@@ -1,0 +1,35 @@
+# Java / Spring Boot
+backend/target/
+backend/*.jar
+backend/*.war
+backend/*.class
+
+# Python
+agent-service/__pycache__/
+agent-service/venv/
+agent-service/*.pyc
+agent-service/.ruff_cache/
+agent-service/.pytest_cache/
+__pycache__/
+
+# Node / React
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment & secrets
+.env
+.env.local
+.env.*.local
+
+# Infrastructure
+docker-compose.override.yml
+*.log

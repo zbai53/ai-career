@@ -1,0 +1,17 @@
+fastapi
+uvicorn[standard]
+langgraph
+langchain
+langchain-anthropic
+anthropic
+qdrant-client
+sentence-transformers
+pydantic
+pdfplumber
+python-docx
+beautifulsoup4
+requests
+python-dotenv
+pytest
+ruff
+httpx
