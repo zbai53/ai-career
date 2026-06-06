@@ -12,6 +12,7 @@ python-docx
 beautifulsoup4
 requests
 python-dotenv
+python-multipart
 pytest
 ruff
 httpx
