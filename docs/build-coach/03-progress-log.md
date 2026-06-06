@@ -5,6 +5,21 @@
 
 ---
 
+
+## Day 5 — 2025-06-06 (Phase 1: Resume Agent + JD Agent)
+
+**Completed:**
+- Implemented ResumeAgent with PDF (pdfplumber) and DOCX (python-docx) text extraction
+- Claude API structured output parsing with Pydantic validation and retry logic
+- Added POST /api/resume/parse FastAPI endpoint with file upload and temp file cleanup
+- Tested with real resume PDF — successfully parsed contact, education, 3 experiences, 7 projects, 25 skills
+- Fixed max_tokens (4096→8192) and raw_text truncation to prevent output cutoff
+- Wrote unit tests with mocked Anthropic API calls
+
+**Blockers:** Model changed from claude-sonnet-4 to claude-haiku-4-5 (API key permissions)
+
+**Next:** Day 6 — Implement JD Agent (text/URL input → structured JD JSON)
+
 ## Day 4 — 2025-06-06 (Phase 1: Resume Agent + JD Agent)
 
 **Completed:**
