@@ -5,6 +5,18 @@
 
 ---
 
+## Day 6 — 2025-06-06 (Phase 1: Resume Agent + JD Agent)
+
+**Completed:**
+- Implemented JDAgent with text input and URL scraping (requests + BeautifulSoup)
+- Claude API structured output with Pydantic validation and retry logic
+- Added POST /api/jd/parse FastAPI endpoint (accepts text or URL)
+- Tested with real JD text — correctly extracted title, company, skills (required vs preferred), salary, location
+- Wrote unit tests with mocked API calls
+
+**Blockers:** None
+
+**Next:** Day 7 — Spring Boot endpoints for resume upload and JD input, file storage with MinIO
 
 ## Day 5 — 2025-06-06 (Phase 1: Resume Agent + JD Agent)
 
