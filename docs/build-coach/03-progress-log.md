@@ -5,6 +5,18 @@
 
 ---
 
+## Day 4 — 2025-06-06 (Phase 1: Resume Agent + JD Agent)
+
+**Completed:**
+- Designed ParsedResume Pydantic model (contact, education, experience, projects, certifications, skills)
+- Designed ParsedJobDescription Pydantic model (title, skills, responsibilities, qualifications, keywords)
+- Exported models from __init__.py, validated examples pass schema validation
+- Documented both schemas in docs/schemas/ with field reference tables
+
+**Blockers:** None
+
+**Next:** Day 5 — Implement Resume Agent (PDF/DOCX extraction + Claude structured output)
+
 ## Day 3 — 2025-06-05 (Phase 0: Environment Setup)
 
 **Completed:**
