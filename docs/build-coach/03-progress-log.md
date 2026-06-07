@@ -4,6 +4,20 @@
 > Re-upload this file to Claude Project Knowledge weekly (every Sunday).
 
 ---
+## Day 7 — 2025-06-07 (Phase 1: Resume Agent + JD Agent)
+
+**Completed:**
+- Created Spring Boot REST endpoints: POST /api/resumes/parse (file upload), POST /api/jds/parse (text/URL)
+- Implemented AgentServiceClient with RestTemplate to call Python agent service (60s timeout for resume parsing)
+- Added request/response DTOs (ResumeParseResponse, JDParseRequest, JDParseResponse)
+- Added MinIO to docker-compose for file storage
+- Implemented FileStorageService for temp file management with UUID naming and cleanup
+- Verified full chain: curl → Spring Boot → Python → Claude → response
+
+**Blockers:** None
+
+**Next:** Day 8 — Test with 5 real resumes and 5 real JDs, fix edge cases
+
 
 ## Day 6 — 2025-06-06 (Phase 1: Resume Agent + JD Agent)
 
