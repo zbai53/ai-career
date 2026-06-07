@@ -4,6 +4,20 @@
 > Re-upload this file to Claude Project Knowledge weekly (every Sunday).
 
 ---
+
+## Day 8 — 2025-06-07 (Phase 1: Resume Agent + JD Agent)
+
+**Completed:**
+- Created batch testing script with 5 diverse JD test cases (backend, frontend, data science, DevOps, junior full stack)
+- Added edge case handling for ResumeAgent: scanned PDF detection, long resume truncation, PDF artifact cleanup
+- Added edge case handling for JDAgent: URL error handling (403/404), Content-Type check, short text validation, HTML entity cleanup
+- Added unit tests for all edge cases, 47 tests passing
+
+**Blockers:** None
+
+**Next:** Day 9 — Write unit tests for both agents with real data, document JSON schemas, buffer day
+
+
 ## Day 7 — 2025-06-07 (Phase 1: Resume Agent + JD Agent)
 
 **Completed:**

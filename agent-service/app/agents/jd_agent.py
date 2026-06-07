@@ -1,6 +1,8 @@
+import html
 import json
 import logging
 import os
+import re
 import time
 
 import anthropic
@@ -14,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 4096
+_MIN_JD_CHARS = 20
 
 _JD_SCHEMA = json.dumps(ParsedJobDescription.model_json_schema(), indent=2)
 
@@ -96,6 +99,11 @@ class JDAgent:
 
     def parse_text(self, raw_text: str) -> ParsedJobDescription:
         """Parse a raw job description string into a validated ParsedJobDescription."""
+        if len(raw_text.strip()) < _MIN_JD_CHARS:
+            raise JDParseError(
+                f"JD text too short to parse ({len(raw_text.strip())} chars, minimum {_MIN_JD_CHARS})."
+            )
+
         t0 = time.perf_counter()
         result = self._call_claude(raw_text, strict=False)
         elapsed_ms = (time.perf_counter() - t0) * 1000
@@ -129,9 +137,29 @@ class JDAgent:
     def _fetch_text_from_url(self, url: str) -> str:
         try:
             response = requests.get(url, headers=_FETCH_HEADERS, timeout=15)
-            response.raise_for_status()
         except requests.RequestException as exc:
             raise JDFetchError(f"Failed to fetch '{url}': {exc}") from exc
+
+        # Surface 403/404 and other HTTP errors with a clear status code message
+        if isinstance(response.status_code, int) and response.status_code in (403, 404):
+            raise JDFetchError(
+                f"URL returned HTTP {response.status_code}: '{url}'. "
+                f"{'Access denied.' if response.status_code == 403 else 'Page not found.'}"
+            )
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            raise JDFetchError(
+                f"URL returned HTTP {response.status_code}: '{url}'"
+            ) from exc
+
+        # Reject non-HTML content types (PDFs, JSON APIs, etc.)
+        content_type = response.headers.get("Content-Type", "")
+        if isinstance(content_type, str) and content_type and "text/html" not in content_type:
+            raise JDFetchError(
+                f"URL returned non-HTML content (Content-Type: '{content_type}'). "
+                f"Only HTML job posting pages are supported."
+            )
 
         soup = BeautifulSoup(response.text, "html.parser")
 
@@ -139,7 +167,11 @@ class JDAgent:
             tag.decompose()
 
         text = soup.get_text(separator="\n", strip=True)
-        # Collapse runs of blank lines to keep the text compact
+        # Decode HTML entities (&amp; &nbsp; &lt; etc.)
+        text = html.unescape(text)
+        # Normalise non-breaking spaces and other unicode whitespace to regular spaces
+        text = re.sub(r"[\xa0\u2009\u200b\u200c\u200d\ufeff]", " ", text)
+        # Collapse runs of blank lines
         lines = [line for line in text.splitlines() if line.strip()]
         cleaned = "\n".join(lines)
 

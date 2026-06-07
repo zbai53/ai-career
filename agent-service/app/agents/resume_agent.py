@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import time
 from pathlib import Path
 
@@ -15,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 8192
+_MIN_TEXT_CHARS = 50       # below this → scanned/image PDF
+_MAX_TEXT_CHARS = 15_000   # truncate before sending to Claude
 
 # JSON schema embedded once at import time so the prompt stays lean
 _RESUME_SCHEMA = json.dumps(ParsedResume.model_json_schema(), indent=2)
@@ -98,7 +101,18 @@ class ResumeAgent:
         extraction_ms = (time.perf_counter() - t0) * 1000
         logger.info("Text extracted from %s in %.0f ms (%d chars)", path.name, extraction_ms, len(raw_text))
 
-        parsed = self._call_claude(raw_text, strict=False)
+        # Truncate before sending to Claude to stay within token budget
+        claude_text = raw_text
+        if len(raw_text) > _MAX_TEXT_CHARS:
+            logger.warning(
+                "Resume text truncated from %d to %d chars for '%s'",
+                len(raw_text), _MAX_TEXT_CHARS, path.name,
+            )
+            claude_text = raw_text[:_MAX_TEXT_CHARS]
+
+        parsed = self._call_claude(claude_text, strict=False)
+        # Always store the full extracted text on the result
+        parsed.raw_text = raw_text
 
         total_ms = (time.perf_counter() - t0) * 1000
         logger.info("Resume parsed in %.0f ms total (confidence=%.2f)", total_ms, parsed.parse_confidence)
@@ -119,9 +133,20 @@ class ResumeAgent:
                         pages.append(text.strip())
                     else:
                         logger.debug("Page %d yielded no text (possibly image-based)", i + 1)
+
             if not pages:
-                raise TextExtractionError(f"No text could be extracted from PDF: {file_path}")
-            return "\n\n".join(pages)
+                raise TextExtractionError(
+                    "PDF appears to be scanned/image-based. Text extraction failed."
+                )
+
+            joined = "\n\n".join(pages)
+
+            if len(joined.strip()) < _MIN_TEXT_CHARS:
+                raise TextExtractionError(
+                    "PDF appears to be scanned/image-based. Text extraction failed."
+                )
+
+            return self._clean_pdf_text(joined)
         except TextExtractionError:
             raise
         except Exception as exc:
@@ -151,6 +176,18 @@ class ResumeAgent:
             raise
         except Exception as exc:
             raise TextExtractionError(f"Failed to read DOCX '{file_path}': {exc}") from exc
+
+    def _clean_pdf_text(self, text: str) -> str:
+        """Remove common PDF artifacts: repeated whitespace, lone page numbers, header/footer noise."""
+        # Collapse runs of 3+ blank lines to a single blank line
+        text = re.sub(r"\n{3,}", "\n\n", text)
+        # Remove lines that are solely a page number (digits, optionally preceded by "Page")
+        text = re.sub(r"(?im)^(page\s*)?\d+\s*$", "", text)
+        # Collapse multiple spaces/tabs to a single space on each line
+        lines = [re.sub(r"[ \t]{2,}", " ", line) for line in text.splitlines()]
+        # Drop lines that are pure whitespace after cleanup
+        lines = [line for line in lines if line.strip()]
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Claude interaction

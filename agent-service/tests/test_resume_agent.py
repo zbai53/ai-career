@@ -317,3 +317,48 @@ class TestParseRetryOnInvalidJson:
 
         assert isinstance(result, ParsedResume)
         assert agent._client.messages.create.call_count == 2
+
+
+class TestEdgeCases:
+    def test_scanned_pdf_raises_error(self, tmp_path: Path) -> None:
+        """A PDF with no extractable text (scanned/image-based) must raise TextExtractionError."""
+        # Build a PDF that pdfplumber opens successfully but yields no text
+        path = tmp_path / "scanned.pdf"
+        c = canvas.Canvas(str(path), pagesize=LETTER)
+        # Save an entirely blank page — no drawString calls
+        c.save()
+
+        agent = _make_agent()
+        with pytest.raises(TextExtractionError) as exc_info:
+            agent._extract_text_from_pdf(str(path))
+
+        msg = str(exc_info.value).lower()
+        assert "scanned" in msg or "image" in msg or "text extraction failed" in msg
+
+    def test_long_resume_truncated_before_claude(self, tmp_path: Path) -> None:
+        """Text longer than 15 000 chars must be truncated before being sent to Claude."""
+        # Create a PDF with known content; we'll mock _extract_text_from_pdf to return long text
+        pdf_path = tmp_path / "long_resume.pdf"
+        c = canvas.Canvas(str(pdf_path), pagesize=LETTER)
+        c.drawString(72, 720, "Jane Doe")
+        c.save()
+
+        long_text = "A" * 20_000  # 20 000 chars — well above the 15 000 limit
+
+        agent = _make_agent()
+        agent._client.messages.create.return_value = _make_fake_response(
+            json.dumps(_VALID_RESUME_PAYLOAD)
+        )
+
+        with patch.object(agent, "_extract_text_from_pdf", return_value=long_text):
+            result = agent.parse(str(pdf_path))
+
+        # Claude must have received at most 15 000 chars in the user message
+        call_args = agent._client.messages.create.call_args
+        user_msg = call_args.kwargs["messages"][0]["content"]
+        # The user message is "Parse the following resume:\n\n" + text
+        sent_text = user_msg.split("\n\n", 1)[1]
+        assert len(sent_text) <= 15_000
+
+        # But the stored raw_text on the result must be the full text
+        assert result.raw_text == long_text

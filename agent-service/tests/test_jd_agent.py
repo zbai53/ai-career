@@ -177,6 +177,8 @@ class TestParseUrlExtractsText:
     def _mock_requests_get(self) -> MagicMock:
         mock_response = MagicMock()
         mock_response.text = _SAMPLE_HTML
+        mock_response.status_code = 200
+        mock_response.headers = {"Content-Type": "text/html; charset=utf-8"}
         mock_response.raise_for_status.return_value = None
         return mock_response
 
@@ -243,6 +245,8 @@ class TestParseUrlExtractsText:
         agent = _make_agent()
         mock_resp = MagicMock()
         mock_resp.text = "<html><body><nav>nav only</nav><footer>footer only</footer></body></html>"
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "text/html; charset=utf-8"}
         mock_resp.raise_for_status.return_value = None
 
         with patch("app.agents.jd_agent.requests.get", return_value=mock_resp):
@@ -347,27 +351,124 @@ class TestParseRetryOnInvalidJson:
         assert agent._client.messages.create.call_count == 2
 
 
-class TestParseTextEmptyInput:
-    def test_empty_string_still_calls_claude(self) -> None:
-        """An empty string is technically valid input — Claude should respond with low confidence."""
+class TestParseTextShortInput:
+    def test_empty_string_raises_jd_parse_error(self) -> None:
+        """Text shorter than 20 chars should raise JDParseError before calling Claude."""
         agent = _make_agent()
-        low_confidence_payload = dict(_VALID_JD_PAYLOAD, parse_confidence=0.1, title="Unknown")
-        agent._client.messages.create.return_value = _make_fake_response(
-            json.dumps(low_confidence_payload)
-        )
 
-        result = agent.parse_text("")
+        with pytest.raises(JDParseError) as exc_info:
+            agent.parse_text("")
+
+        assert "too short" in str(exc_info.value).lower()
+        agent._client.messages.create.assert_not_called()
+
+    def test_short_text_raises_jd_parse_error(self) -> None:
+        agent = _make_agent()
+
+        with pytest.raises(JDParseError):
+            agent.parse_text("Too short.")
+
+        agent._client.messages.create.assert_not_called()
+
+    def test_exactly_threshold_passes_through(self) -> None:
+        """Text of exactly 20 non-whitespace chars should reach Claude."""
+        agent = _make_agent()
+        agent._client.messages.create.return_value = _make_fake_response(
+            json.dumps(_VALID_JD_PAYLOAD)
+        )
+        # 20 printable chars
+        text = "A" * 20
+
+        result = agent.parse_text(text)
 
         assert isinstance(result, ParsedJobDescription)
         agent._client.messages.create.assert_called_once()
 
-    def test_empty_string_raw_text_preserved(self) -> None:
+
+class TestEdgeCases:
+    def test_short_jd_raises_error(self) -> None:
+        """Text under 20 chars raises JDParseError without calling Claude."""
         agent = _make_agent()
-        payload = dict(_VALID_JD_PAYLOAD, title="Unknown")
+
+        with pytest.raises(JDParseError) as exc_info:
+            agent.parse_text("Hire me!")
+
+        assert "too short" in str(exc_info.value).lower()
+        agent._client.messages.create.assert_not_called()
+
+    def test_url_404_raises_error(self) -> None:
+        """A 404 response must raise JDFetchError with the status code in the message."""
+        agent = _make_agent()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        mock_resp.headers = {"Content-Type": "text/html"}
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("app.agents.jd_agent.requests.get", return_value=mock_resp):
+            with pytest.raises(JDFetchError) as exc_info:
+                agent.parse_url("https://example.com/jobs/expired")
+
+        assert "404" in str(exc_info.value)
+
+    def test_url_403_raises_error(self) -> None:
+        """A 403 response must raise JDFetchError with the status code in the message."""
+        agent = _make_agent()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 403
+        mock_resp.headers = {"Content-Type": "text/html"}
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("app.agents.jd_agent.requests.get", return_value=mock_resp):
+            with pytest.raises(JDFetchError) as exc_info:
+                agent.parse_url("https://example.com/jobs/blocked")
+
+        assert "403" in str(exc_info.value)
+
+    def test_non_html_content_type_raises_error(self) -> None:
+        """A URL returning a PDF (non-HTML Content-Type) must raise JDFetchError."""
+        agent = _make_agent()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "application/pdf"}
+        mock_resp.raise_for_status.return_value = None
+
+        with patch("app.agents.jd_agent.requests.get", return_value=mock_resp):
+            with pytest.raises(JDFetchError) as exc_info:
+                agent.parse_url("https://example.com/jobs/posting.pdf")
+
+        assert "application/pdf" in str(exc_info.value)
+
+    def test_html_entities_cleaned(self) -> None:
+        """HTML entities (&amp; &nbsp; &lt; etc.) must be decoded before Claude receives the text."""
+        agent = _make_agent()
         agent._client.messages.create.return_value = _make_fake_response(
-            json.dumps(payload)
+            json.dumps(_VALID_JD_PAYLOAD)
         )
 
-        result = agent.parse_text("")
+        html_with_entities = """
+        <html><body>
+          <h1>Senior Engineer &amp; Tech Lead</h1>
+          <p>Salary:&nbsp;$120,000&nbsp;&ndash;&nbsp;$150,000</p>
+          <p>Requirements: Python &gt;= 3.10 &amp; experience with AWS&lt;br&gt;</p>
+        </body></html>
+        """
+        mock_resp = MagicMock()
+        mock_resp.text = html_with_entities
+        mock_resp.status_code = 200
+        mock_resp.headers = {"Content-Type": "text/html; charset=utf-8"}
+        mock_resp.raise_for_status.return_value = None
 
-        assert result.raw_text == ""
+        with patch("app.agents.jd_agent.requests.get", return_value=mock_resp):
+            agent.parse_url("https://example.com/jobs/senior-engineer")
+
+        call_args = agent._client.messages.create.call_args
+        user_msg = call_args.kwargs["messages"][0]["content"]
+
+        # Entities must be decoded — raw entity strings must not appear
+        assert "&amp;" not in user_msg
+        assert "&nbsp;" not in user_msg
+        assert "&gt;" not in user_msg
+        assert "&lt;" not in user_msg
+        # Decoded content must be present
+        assert "&" in user_msg
+        assert "$120,000" in user_msg
