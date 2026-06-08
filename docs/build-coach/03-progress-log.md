@@ -5,6 +5,20 @@
 
 ---
 
+## Day 10 — 2025-06-08 (Phase 2: Match Agent + Database)
+
+**Completed:**
+- Created Flyway migration V1__create_core_tables.sql with 6 tables: users, resumes, job_descriptions, match_results, interview_sessions, agent_runs
+- All tables use JSONB for flexible agent outputs (parsed_data, gap_analysis, conversation, review)
+- Added indexes on foreign keys and frequently queried columns
+- Created Java entity classes: User, Resume, JobDescription
+- Created MyBatis mappers with XML: UserMapper, ResumeMapper, JobDescriptionMapper (insert, findById, findByUserId, deleteById)
+- agent_runs table designed for observability (duration, token count, model name, error tracking)
+
+**Blockers:** None
+
+**Next:** Day 11 — MyBatis integration tests, basic CRUD verification
+
 
 ## Day 9 — 2025-06-07 (Phase 1: Resume Agent + JD Agent)
 
