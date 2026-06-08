@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.aicareer.mapper.UserMapper">
+
+    <resultMap id="userResultMap" type="com.aicareer.model.entity.User">
+        <id     column="id"            property="id"/>
+        <result column="email"         property="email"/>
+        <result column="password_hash" property="passwordHash"/>
+        <result column="name"          property="name"/>
+        <result column="created_at"    property="createdAt"/>
+        <result column="updated_at"    property="updatedAt"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.aicareer.model.entity.User"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO users (email, password_hash, name)
+        VALUES (#{email}, #{passwordHash}, #{name})
+    </insert>
+
+    <select id="findById" parameterType="long" resultMap="userResultMap">
+        SELECT id, email, password_hash, name, created_at, updated_at
+        FROM users
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByEmail" parameterType="string" resultMap="userResultMap">
+        SELECT id, email, password_hash, name, created_at, updated_at
+        FROM users
+        WHERE email = #{email}
+    </select>
+
+    <delete id="deleteById" parameterType="long">
+        DELETE FROM users WHERE id = #{id}
+    </delete>
+
+</mapper>
