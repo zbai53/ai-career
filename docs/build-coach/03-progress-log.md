@@ -5,6 +5,26 @@
 
 ---
 
+
+## Day 9 — 2025-06-07 (Phase 1: Resume Agent + JD Agent)
+
+**Completed:**
+- Ran real data tests: 5/5 JD test cases passed with real Claude API calls
+- All 47 unit tests passing
+- Created API endpoints documentation (docs/schemas/api-endpoints.md)
+- Updated schema docs to match current Pydantic models
+- Marked Phase 0 and Phase 1 complete in roadmap
+
+**Blockers:** None
+
+**Phase 1 Summary:**
+- 2 working agents (Resume + JD) with structured output and validation
+- 47 unit tests, edge case handling, retry logic
+- Full communication chain: Frontend → Spring Boot → Python → Claude API
+- Docker infrastructure: PostgreSQL, Redis, Qdrant, MinIO
+
+**Next:** Day 10 — Phase 2: Flyway migrations for core tables (users, resumes, job_descriptions, match_results, etc.)
+
 ## Day 8 — 2025-06-07 (Phase 1: Resume Agent + JD Agent)
 
 **Completed:**

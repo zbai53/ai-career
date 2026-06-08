@@ -10,9 +10,9 @@
 
 > Get all three services running. Hello World level is fine.
 
-- [ ] **Day 1:** Create GitHub repo `ai-career` (monorepo). Push root commit with `.gitignore`, `LICENSE`, `.editorconfig`, `README.md`, `.env.example`. Set up `docs/build-coach/` with these files.
-- [ ] **Day 2:** Initialize Spring Boot project (`backend/`): Spring Web, MyBatis, PostgreSQL, Redis, Validation, Spring Security starters. Write `/health` endpoint. Initialize Python project (`agent-service/`): venv, FastAPI, LangGraph, anthropic SDK, qdrant-client. Write `/health` endpoint. Initialize React project (`frontend/`): Vite + React 18 + TypeScript + TailwindCSS. Show "Hello AI Career" page.
-- [ ] **Day 3:** Write `docker-compose.yml` for PostgreSQL 16, Redis 7, Qdrant. Verify `docker-compose up` works. Verify Spring Boot can call Python service `/health`. Verify Python service can call Anthropic API (test prompt). Apply for Anthropic API key if not done.
+- [x] **Day 1:** Create GitHub repo `ai-career` (monorepo). Push root commit with `.gitignore`, `LICENSE`, `.editorconfig`, `README.md`, `.env.example`. Set up `docs/build-coach/` with these files.
+- [x] **Day 2:** Initialize Spring Boot project (`backend/`): Spring Web, MyBatis, PostgreSQL, Redis, Validation, Spring Security starters. Write `/health` endpoint. Initialize Python project (`agent-service/`): venv, FastAPI, LangGraph, anthropic SDK, qdrant-client. Write `/health` endpoint. Initialize React project (`frontend/`): Vite + React 18 + TypeScript + TailwindCSS. Show "Hello AI Career" page.
+- [x] **Day 3:** Write `docker-compose.yml` for PostgreSQL 16, Redis 7, Qdrant. Verify `docker-compose up` works. Verify Spring Boot can call Python service `/health`. Verify Python service can call Anthropic API (test prompt). Apply for Anthropic API key if not done.
 
 **Understand before moving on:**
 - Why did we choose a monorepo instead of separate repos?
@@ -28,12 +28,12 @@
 
 > Two standalone agents that turn unstructured input into structured JSON.
 
-- [ ] **Day 4:** Design the Resume JSON schema (Pydantic model): education, experience, skills, projects, certifications. Design the JD JSON schema: title, company, required_skills, preferred_skills, responsibilities, years_experience, keywords.
-- [ ] **Day 5:** Implement Resume Agent in Python: PDF text extraction (pdfplumber), DOCX extraction (python-docx), prompt to Claude for structured output, Pydantic validation.
-- [ ] **Day 6:** Implement JD Agent: accept raw text input, prompt to Claude for structured extraction, Pydantic validation. Add URL input option (requests + BeautifulSoup to scrape JD pages).
-- [ ] **Day 7:** Spring Boot endpoints: `POST /api/resumes` (file upload → call Python service), `POST /api/jds` (text → call Python service). File storage with MinIO (S3-compatible, local dev).
-- [ ] **Day 8:** Test with 5 real resumes (various formats: PDF, DOCX, different layouts) and 5 real JDs (LinkedIn, Indeed, BOSS). Fix edge cases.
-- [ ] **Day 9:** Write unit tests for both agents. Document the JSON schemas in `docs/schemas/`. Buffer day for catching up.
+- [x] **Day 4:** Design the Resume JSON schema (Pydantic model): education, experience, skills, projects, certifications. Design the JD JSON schema: title, company, required_skills, preferred_skills, responsibilities, years_experience, keywords.
+- [x] **Day 5:** Implement Resume Agent in Python: PDF text extraction (pdfplumber), DOCX extraction (python-docx), prompt to Claude for structured output, Pydantic validation.
+- [x] **Day 6:** Implement JD Agent: accept raw text input, prompt to Claude for structured extraction, Pydantic validation. Add URL input option (requests + BeautifulSoup to scrape JD pages).
+- [x] **Day 7:** Spring Boot endpoints: `POST /api/resumes` (file upload → call Python service), `POST /api/jds` (text → call Python service). File storage with MinIO (S3-compatible, local dev).
+- [x] **Day 8:** Test with 5 real resumes (various formats: PDF, DOCX, different layouts) and 5 real JDs (LinkedIn, Indeed, BOSS). Fix edge cases.
+- [x] **Day 9:** Write unit tests for both agents. Document the JSON schemas in `docs/schemas/`. Buffer day for catching up.
 
 **Understand before moving on:**
 - Why use Pydantic for output validation instead of just trusting the LLM?
