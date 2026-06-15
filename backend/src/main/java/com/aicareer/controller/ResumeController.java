@@ -1,14 +1,12 @@
 package com.aicareer.controller;
 
-import com.aicareer.service.AgentServiceClient;
-import com.aicareer.service.FileStorageService;
+import com.aicareer.mapper.ResumeMapper;
+import com.aicareer.model.entity.Resume;
+import com.aicareer.service.ResumeService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Map;
@@ -20,13 +18,15 @@ public class ResumeController {
 
     private static final Logger log = LoggerFactory.getLogger(ResumeController.class);
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(".pdf", ".docx");
+    // Placeholder until real auth is wired in
+    private static final long HARDCODED_USER_ID = 1L;
 
-    private final AgentServiceClient agentServiceClient;
-    private final FileStorageService fileStorageService;
+    private final ResumeService resumeService;
+    private final ResumeMapper resumeMapper;
 
-    public ResumeController(AgentServiceClient agentServiceClient, FileStorageService fileStorageService) {
-        this.agentServiceClient = agentServiceClient;
-        this.fileStorageService = fileStorageService;
+    public ResumeController(ResumeService resumeService, ResumeMapper resumeMapper) {
+        this.resumeService = resumeService;
+        this.resumeMapper = resumeMapper;
     }
 
     @PostMapping("/parse")
@@ -44,22 +44,25 @@ public class ResumeController {
         long startMs = System.currentTimeMillis();
         log.info("Resume parse request — file: '{}', size: {} bytes", originalName, file.getSize());
 
-        String savedPath = null;
         try {
-            savedPath = fileStorageService.saveFile(file);
-            String result = agentServiceClient.parseResume(file.getBytes(), originalName);
+            Resume resume = resumeService.parseAndSave(file, HARDCODED_USER_ID);
             long elapsedMs = System.currentTimeMillis() - startMs;
-            log.info("Resume '{}' parsed in {} ms", originalName, elapsedMs);
-            return ResponseEntity.ok(result);
+            log.info("Resume '{}' parsed and saved (id={}) in {} ms", originalName, resume.getId(), elapsedMs);
+            return ResponseEntity.ok(resume);
         } catch (Exception e) {
             long elapsedMs = System.currentTimeMillis() - startMs;
             log.error("Resume parse failed for '{}' after {} ms: {}", originalName, elapsedMs, e.getMessage());
             return ResponseEntity.internalServerError().body(
                     Map.of("error", "Failed to parse resume: " + e.getMessage()));
-        } finally {
-            if (savedPath != null) {
-                fileStorageService.deleteFile(savedPath);
-            }
         }
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<Object> findById(@PathVariable Long id) {
+        Resume resume = resumeMapper.findById(id);
+        if (resume == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(resume);
     }
 }
