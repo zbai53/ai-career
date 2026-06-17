@@ -5,6 +5,20 @@
 
 ---
 
+## Day 12 — 2025-06-16 (Phase 2: Match Agent + Database)
+
+**Completed:**
+- Implemented MatchAgent with three scoring dimensions: skill (45%), experience (30%), keyword (25%)
+- Skill and keyword scoring in pure Python (no LLM needed), gap analysis via Claude
+- Created MatchResult Pydantic model and POST /api/match FastAPI endpoint
+- Created Spring Boot MatchController, MatchResultMapper, MatchResultEntity
+- Full chain working: Spring Boot loads resume + JD from DB → sends to Python → gets scores + gap analysis → saves to match_results table
+- Wrote unit tests for MatchAgent
+
+**Blockers:** Debugging 404 — was caused by using wrong DB IDs (auto-increment skipped numbers)
+
+**Next:** Day 13 — Tune scoring weights, implement scoring algorithm improvements
+
 ## Day 11 — 2025-06-08 (Phase 2: Match Agent + Database)
 
 **Completed:**
