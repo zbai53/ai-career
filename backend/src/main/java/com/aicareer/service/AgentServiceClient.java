@@ -1,6 +1,9 @@
 package com.aicareer.service;
 
 import com.aicareer.config.AgentServiceConfig;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.*;
@@ -21,14 +24,17 @@ public class AgentServiceClient {
     private final RestTemplate restTemplate;
     private final RestTemplate agentRestTemplate;
     private final String agentServiceUrl;
+    private final ObjectMapper objectMapper;
 
     public AgentServiceClient(
             RestTemplate restTemplate,
             @Qualifier("agentRestTemplate") RestTemplate agentRestTemplate,
-            AgentServiceConfig agentServiceConfig) {
+            AgentServiceConfig agentServiceConfig,
+            ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
         this.agentRestTemplate = agentRestTemplate;
         this.agentServiceUrl = agentServiceConfig.getAgentServiceUrl();
+        this.objectMapper = objectMapper;
     }
 
     public String checkHealth() {
@@ -119,6 +125,51 @@ public class AgentServiceClient {
         } catch (HttpClientErrorException | HttpServerErrorException e) {
             throw new RuntimeException(
                     "JD parse request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
+        }
+    }
+
+    /**
+     * Sends a resume and job description to the agent-service match endpoint
+     * and returns the raw JSON match result.
+     *
+     * @param resumeJson  parsedData JSON string from the resumes table
+     * @param jdJson      parsedData JSON string from the job_descriptions table
+     * @return JSON string representing the MatchResult
+     */
+    public String matchResumeToJD(String resumeJson, String jdJson) {
+        String endpoint = agentServiceUrl + "/api/match";
+
+        JsonNode resumeNode;
+        JsonNode jdNode;
+        try {
+            resumeNode = objectMapper.readTree(resumeJson);
+            jdNode = objectMapper.readTree(jdJson);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to parse stored JSON before sending to agent-service: " + e.getMessage(), e);
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("resume", resumeNode);
+        body.put("jd", jdNode);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+        try {
+            ResponseEntity<String> response = agentRestTemplate.postForEntity(endpoint, request, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException(
+                        "Match failed with status " + response.getStatusCode() + ": " + response.getBody());
+            }
+            return response.getBody();
+        } catch (ResourceAccessException e) {
+            throw new RuntimeException(
+                    "Could not reach agent-service at " + endpoint + " (connection/timeout): " + e.getMessage(), e);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            throw new RuntimeException(
+                    "Match request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
         }
     }
 

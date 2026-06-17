@@ -11,6 +11,7 @@ from .job_description import (
     JDSkillRequirement,
     ParsedJobDescription,
 )
+from .match_result import MatchResult
 
 __all__ = [
     "ResumeContact",
@@ -22,4 +23,5 @@ __all__ = [
     "ParsedResume",
     "JDSkillRequirement",
     "ParsedJobDescription",
+    "MatchResult",
 ]

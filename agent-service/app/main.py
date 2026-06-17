@@ -13,6 +13,9 @@ from pydantic import BaseModel
 
 from app.agents.resume_agent import ResumeAgent, UnsupportedFileTypeError, TextExtractionError, ResumeParseError
 from app.agents.jd_agent import JDAgent, JDFetchError, JDParseError
+from app.agents.match_agent import MatchAgent
+from app.models.job_description import ParsedJobDescription
+from app.models.resume import ParsedResume
 
 app = FastAPI(title="AI Career Agent Service")
 
@@ -23,6 +26,11 @@ _ALLOWED_SUFFIXES = {".pdf", ".docx"}
 class JDParseRequest(BaseModel):
     text: Optional[str] = None
     url: Optional[str] = None
+
+
+class MatchRequest(BaseModel):
+    resume: dict
+    jd: dict
 
 
 @app.get("/health")
@@ -105,3 +113,19 @@ async def parse_jd(body: JDParseRequest):
         return JSONResponse(status_code=500, content={"error": str(exc)})
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": f"Unexpected error: {exc}"})
+
+
+@app.post("/api/match")
+async def match_resume_to_jd(body: MatchRequest):
+    try:
+        resume = ParsedResume.model_validate(body.resume)
+        jd = ParsedJobDescription.model_validate(body.jd)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": f"Validation failed: {exc}"})
+
+    try:
+        agent = MatchAgent()
+        result = agent.match(resume, jd)
+        return result.model_dump()
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": f"Match failed: {exc}"})

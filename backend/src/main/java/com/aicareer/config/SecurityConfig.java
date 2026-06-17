@@ -22,6 +22,7 @@ public class SecurityConfig {
                 .requestMatchers("/health").permitAll()
                 .requestMatchers("/api/resumes/**").permitAll()
                 .requestMatchers("/api/jds/**").permitAll()
+                .requestMatchers("/api/match/**").permitAll()
                 // TODO: lock down endpoints once authentication is implemented
                 .anyRequest().permitAll()
             );

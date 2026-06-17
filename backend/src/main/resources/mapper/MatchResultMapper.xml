@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.aicareer.mapper.MatchResultMapper">
+
+    <resultMap id="matchResultMap" type="com.aicareer.model.entity.MatchResultEntity">
+        <id     column="id"               property="id"/>
+        <result column="user_id"          property="userId"/>
+        <result column="resume_id"        property="resumeId"/>
+        <result column="jd_id"            property="jdId"/>
+        <result column="overall_score"    property="overallScore"/>
+        <result column="skill_score"      property="skillScore"/>
+        <result column="experience_score" property="experienceScore"/>
+        <result column="keyword_score"    property="keywordScore"/>
+        <result column="gap_analysis"     property="gapAnalysis"/>
+        <result column="created_at"       property="createdAt"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.aicareer.model.entity.MatchResultEntity"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO match_results
+            (user_id, resume_id, jd_id, overall_score, skill_score, experience_score, keyword_score, gap_analysis)
+        VALUES
+            (#{userId}, #{resumeId}, #{jdId},
+             #{overallScore}, #{skillScore}, #{experienceScore}, #{keywordScore},
+             #{gapAnalysis}::jsonb)
+    </insert>
+
+    <select id="findById" parameterType="long" resultMap="matchResultMap">
+        SELECT id, user_id, resume_id, jd_id,
+               overall_score, skill_score, experience_score, keyword_score,
+               gap_analysis::text AS gap_analysis,
+               created_at
+        FROM match_results
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByResumeIdAndJdId" resultMap="matchResultMap">
+        SELECT id, user_id, resume_id, jd_id,
+               overall_score, skill_score, experience_score, keyword_score,
+               gap_analysis::text AS gap_analysis,
+               created_at
+        FROM match_results
+        WHERE resume_id = #{resumeId}
+          AND jd_id     = #{jdId}
+        ORDER BY created_at DESC
+    </select>
+
+</mapper>
