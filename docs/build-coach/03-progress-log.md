@@ -5,6 +5,20 @@
 
 ---
 
+## Day 11 — 2025-06-08 (Phase 2: Match Agent + Database)
+
+**Completed:**
+- Created MyBatis integration tests for UserMapper, ResumeMapper, JobDescriptionMapper
+- Created service layer: ResumeService.parseAndSave(), JobDescriptionService.parseAndSave()
+- Updated controllers to persist parsed data to PostgreSQL via service layer
+- Added GET endpoints: /api/resumes/{id}, /api/jds/{id}
+- Added V2 migration: insert test user for development
+- Verified full flow: upload → parse → save → retrieve from DB
+
+**Blockers:** None
+
+**Next:** Day 12 — Implement Match Agent
+
 ## Day 10 — 2025-06-08 (Phase 2: Match Agent + Database)
 
 **Completed:**
@@ -22,8 +36,7 @@
 
 ## Day 9 — 2025-06-07 (Phase 1: Resume Agent + JD Agent)
 
-**Completed:**
-- Ran real data tests: 5/5 JD test cases passed with real Claude API calls
+ - Ran real data tests: 5/5 JD test cases passed with real Claude API calls
 - All 47 unit tests passing
 - Created API endpoints documentation (docs/schemas/api-endpoints.md)
 - Updated schema docs to match current Pydantic models
