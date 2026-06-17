@@ -341,7 +341,7 @@ class TestMatchAgent:
         agent = MatchAgent()
         resume = _make_resume(["Java", "Python", "Spring Boot"])
         jd = _make_jd(["Java", "Python"], ["Spring Boot"])
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
         assert result.skill_score >= 90
 
     def test_skill_score_partial_match(self, mock_cls):
@@ -352,7 +352,7 @@ class TestMatchAgent:
         agent = MatchAgent()
         resume = _make_resume(["Python", "Docker"])
         jd = _make_jd(["Python", "Docker", "Kubernetes", "AWS"])
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
         assert result.skill_score == pytest.approx(65.0)
 
     def test_skill_score_no_match(self, mock_cls):
@@ -362,7 +362,7 @@ class TestMatchAgent:
         agent = MatchAgent()
         resume = _make_resume(["Ruby", "Rails"])
         jd = _make_jd(["Java", "Python"], ["Spring Boot"])
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
         assert result.skill_score <= 10
 
     def test_keyword_score(self, mock_cls):
@@ -376,7 +376,7 @@ class TestMatchAgent:
             [], [],
             keywords=["Java", "Spring Boot", "PostgreSQL", "Kubernetes", "Docker"],
         )
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
         assert 55 <= result.keyword_score <= 65
 
     def test_experience_score_meets_requirement(self, mock_cls):
@@ -394,7 +394,7 @@ class TestMatchAgent:
             ],
         )
         jd = _make_jd([], min_years=3)
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
         assert result.experience_score >= 70
 
     def test_experience_score_under_requirement(self, mock_cls):
@@ -412,7 +412,7 @@ class TestMatchAgent:
             ],
         )
         jd = _make_jd([], min_years=3)
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
         assert result.experience_score < 70
 
     def test_overall_score_weighted(self, mock_cls):
@@ -423,7 +423,7 @@ class TestMatchAgent:
         agent = MatchAgent()
         resume = _make_resume(["Java", "Python"], raw_text="Java Python")
         jd = _make_jd(["Java", "Python"], [], keywords=["Java", "Python"])
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
 
         expected = (
             result.skill_score * 0.45
@@ -440,7 +440,7 @@ class TestMatchAgent:
         agent = MatchAgent()
         resume = _make_resume(["Java"])
         jd = _make_jd(["Java", "Python"], ["AWS"])
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
 
         assert isinstance(result, MatchResult)
         assert 0.0 <= result.overall_score <= 100.0
@@ -454,6 +454,11 @@ class TestMatchAgent:
         assert isinstance(result.matched_keywords, list)
         assert isinstance(result.missing_required_skills, list)
         assert isinstance(result.missing_preferred_skills, list)
+        assert agent_run["agent_name"] == "match_agent"
+        assert agent_run["status"] == "success"
+        assert isinstance(agent_run["duration_ms"], int)
+        assert isinstance(agent_run["token_count"], int)
+        assert "created_at" in agent_run
 
     def test_gap_analysis_fallback_on_bad_json(self, mock_cls):
         """If Claude returns invalid JSON twice, match() still returns a MatchResult."""
@@ -470,7 +475,7 @@ class TestMatchAgent:
         agent = MatchAgent()
         resume = _make_resume(["Python"], raw_text="Python")
         jd = _make_jd(["Python"], keywords=["Python"])
-        result = agent.match(resume, jd)
+        result, agent_run = agent.match(resume, jd)
 
         assert isinstance(result, MatchResult)
         assert result.overall_assessment == "Gap analysis could not be completed."

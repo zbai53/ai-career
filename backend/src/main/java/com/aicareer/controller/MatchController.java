@@ -6,6 +6,7 @@ import com.aicareer.mapper.ResumeMapper;
 import com.aicareer.model.entity.JobDescription;
 import com.aicareer.model.entity.MatchResultEntity;
 import com.aicareer.model.entity.Resume;
+import com.aicareer.service.AgentRunService;
 import com.aicareer.service.AgentServiceClient;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,17 +30,20 @@ public class MatchController {
     private final JobDescriptionMapper jobDescriptionMapper;
     private final MatchResultMapper matchResultMapper;
     private final AgentServiceClient agentServiceClient;
+    private final AgentRunService agentRunService;
     private final ObjectMapper objectMapper;
 
     public MatchController(ResumeMapper resumeMapper,
                            JobDescriptionMapper jobDescriptionMapper,
                            MatchResultMapper matchResultMapper,
                            AgentServiceClient agentServiceClient,
+                           AgentRunService agentRunService,
                            ObjectMapper objectMapper) {
         this.resumeMapper = resumeMapper;
         this.jobDescriptionMapper = jobDescriptionMapper;
         this.matchResultMapper = matchResultMapper;
         this.agentServiceClient = agentServiceClient;
+        this.agentRunService = agentRunService;
         this.objectMapper = objectMapper;
     }
 
@@ -78,6 +82,13 @@ public class MatchController {
 
             long elapsedMs = System.currentTimeMillis() - startMs;
             log.info("Match saved (id={}) in {} ms — overall={}", entity.getId(), elapsedMs, entity.getOverallScore());
+
+            try {
+                agentRunService.saveFromResponse(matchJson, HARDCODED_USER_ID);
+            } catch (Exception logEx) {
+                log.warn("Failed to persist agent_run log for match (resumeId={} jdId={}): {}",
+                        request.resumeId(), request.jdId(), logEx.getMessage());
+            }
 
             return ResponseEntity.ok(root);
 

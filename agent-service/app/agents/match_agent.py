@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.models.job_description import JDSkillRequirement, ParsedJobDescription
 from app.models.match_result import MatchResult
 from app.models.resume import ParsedResume, ResumeExperience
+from app.utils.agent_logger import log_agent_run
 
 logger = logging.getLogger(__name__)
 
@@ -514,12 +515,20 @@ class MatchAgent:
         if not api_key:
             raise EnvironmentError("ANTHROPIC_API_KEY is not set")
         self._client = anthropic.Anthropic(api_key=api_key)
+        self._token_count: int = 0
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def match(self, resume: ParsedResume, jd: ParsedJobDescription) -> MatchResult:
+    def match(self, resume: ParsedResume, jd: ParsedJobDescription) -> tuple[MatchResult, dict]:
+        """
+        Score a resume against a job description.
+
+        Returns:
+            (MatchResult, agent_run_log)
+        """
+        self._token_count = 0
         t0 = time.perf_counter()
 
         # --- Dimension 1: skill score (pure Python) ---
@@ -549,13 +558,13 @@ class MatchAgent:
             missing_required, missing_preferred,
         )
 
-        elapsed_ms = (time.perf_counter() - t0) * 1000
+        duration_ms = int((time.perf_counter() - t0) * 1000)
         logger.info(
-            "Match completed in %.0f ms — overall=%.1f skill=%.1f exp=%.1f kw=%.1f",
-            elapsed_ms, overall_score, skill_score, experience_score, keyword_score,
+            "Match completed in %d ms — overall=%.1f skill=%.1f exp=%.1f kw=%.1f",
+            duration_ms, overall_score, skill_score, experience_score, keyword_score,
         )
 
-        return MatchResult(
+        result = MatchResult(
             overall_score=round(overall_score, 2),
             skill_score=round(skill_score, 2),
             experience_score=round(experience_score, 2),
@@ -568,6 +577,17 @@ class MatchAgent:
             matched_skills=matched_skills,
             matched_keywords=matched_kw,
         )
+
+        agent_run = log_agent_run(
+            agent_name="match_agent",
+            input_summary=f"resume skills={len(resume.skills)}, jd={jd.title}",
+            output_summary=f"overall={result.overall_score}, skill={result.skill_score}",
+            status="success",
+            duration_ms=duration_ms,
+            token_count=self._token_count,
+            model_name=_MODEL,
+        )
+        return result, agent_run
 
     # ------------------------------------------------------------------
     # Claude helpers
@@ -615,6 +635,7 @@ class MatchAgent:
                     messages=[{"role": "user", "content": user_content}],
                 )
                 elapsed_ms = (time.perf_counter() - t0) * 1000
+                self._token_count += response.usage.input_tokens + response.usage.output_tokens
                 logger.info(
                     "Gap analysis call %d: %.0f ms | in=%d out=%d",
                     attempt + 1,

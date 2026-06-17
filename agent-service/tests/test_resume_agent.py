@@ -195,7 +195,7 @@ class TestParseReturnsValidSchema:
             json.dumps(payload)
         )
 
-        result = agent.parse(str(pdf_file))
+        result, agent_run = agent.parse(str(pdf_file))
 
         assert isinstance(result, ParsedResume)
 
@@ -205,7 +205,7 @@ class TestParseReturnsValidSchema:
             json.dumps(_VALID_RESUME_PAYLOAD)
         )
 
-        result = agent.parse(str(pdf_file))
+        result, agent_run = agent.parse(str(pdf_file))
 
         assert result.contact.name == "Jane Doe"
         assert result.contact.email == "jane@example.com"
@@ -219,7 +219,7 @@ class TestParseReturnsValidSchema:
             json.dumps(payload)
         )
 
-        result = agent.parse(str(pdf_file))
+        result, agent_run = agent.parse(str(pdf_file))
 
         # Should contain actual PDF text, not Claude's placeholder
         assert "Jane Doe" in result.raw_text
@@ -230,7 +230,7 @@ class TestParseReturnsValidSchema:
             json.dumps(_VALID_RESUME_PAYLOAD)
         )
 
-        result = agent.parse(str(pdf_file))
+        result, agent_run = agent.parse(str(pdf_file))
 
         assert 0.0 <= result.parse_confidence <= 1.0
 
@@ -240,7 +240,7 @@ class TestParseReturnsValidSchema:
             json.dumps(_VALID_RESUME_PAYLOAD)
         )
 
-        result = agent.parse(str(pdf_file))
+        result, agent_run = agent.parse(str(pdf_file))
 
         assert len(result.experience) == 1
         assert result.experience[0].company == "Acme Corp"
@@ -252,7 +252,7 @@ class TestParseReturnsValidSchema:
         fenced = f"```json\n{json.dumps(_VALID_RESUME_PAYLOAD)}\n```"
         agent._client.messages.create.return_value = _make_fake_response(fenced)
 
-        result = agent.parse(str(pdf_file))
+        result, agent_run = agent.parse(str(pdf_file))
 
         assert isinstance(result, ParsedResume)
         assert result.contact.name == "Jane Doe"
@@ -267,7 +267,7 @@ class TestParseRetryOnInvalidJson:
             valid_response,
         ]
 
-        result = agent.parse(str(pdf_file))
+        result, agent_run = agent.parse(str(pdf_file))
 
         assert isinstance(result, ParsedResume)
         assert agent._client.messages.create.call_count == 2
@@ -313,7 +313,7 @@ class TestParseRetryOnInvalidJson:
             valid_response,
         ]
 
-        result = agent.parse(str(pdf_file))
+        result, agent_run = agent.parse(str(pdf_file))
 
         assert isinstance(result, ParsedResume)
         assert agent._client.messages.create.call_count == 2
@@ -351,7 +351,7 @@ class TestEdgeCases:
         )
 
         with patch.object(agent, "_extract_text_from_pdf", return_value=long_text):
-            result = agent.parse(str(pdf_path))
+            result, agent_run = agent.parse(str(pdf_path))
 
         # Claude must have received at most 15 000 chars in the user message
         call_args = agent._client.messages.create.call_args

@@ -17,13 +17,16 @@ public class JobDescriptionService {
 
     private final AgentServiceClient agentServiceClient;
     private final JobDescriptionMapper jobDescriptionMapper;
+    private final AgentRunService agentRunService;
     private final ObjectMapper objectMapper;
 
     public JobDescriptionService(AgentServiceClient agentServiceClient,
                                  JobDescriptionMapper jobDescriptionMapper,
+                                 AgentRunService agentRunService,
                                  ObjectMapper objectMapper) {
         this.agentServiceClient = agentServiceClient;
         this.jobDescriptionMapper = jobDescriptionMapper;
+        this.agentRunService = agentRunService;
         this.objectMapper = objectMapper;
     }
 
@@ -63,6 +66,13 @@ public class JobDescriptionService {
             jobDescriptionMapper.insert(jd);
             log.info("JobDescription '{}' at '{}' persisted with id={} (userId={})",
                     title, sourceUrl, jd.getId(), userId);
+
+            try {
+                agentRunService.saveFromResponse(parsedJson, userId);
+            } catch (Exception logEx) {
+                log.warn("Failed to persist agent_run log for JD '{}': {}", title, logEx.getMessage());
+            }
+
             return jd;
 
         } catch (Exception e) {

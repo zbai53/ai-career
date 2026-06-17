@@ -19,15 +19,18 @@ public class ResumeService {
     private final FileStorageService fileStorageService;
     private final AgentServiceClient agentServiceClient;
     private final ResumeMapper resumeMapper;
+    private final AgentRunService agentRunService;
     private final ObjectMapper objectMapper;
 
     public ResumeService(FileStorageService fileStorageService,
                          AgentServiceClient agentServiceClient,
                          ResumeMapper resumeMapper,
+                         AgentRunService agentRunService,
                          ObjectMapper objectMapper) {
         this.fileStorageService = fileStorageService;
         this.agentServiceClient = agentServiceClient;
         this.resumeMapper = resumeMapper;
+        this.agentRunService = agentRunService;
         this.objectMapper = objectMapper;
     }
 
@@ -65,6 +68,13 @@ public class ResumeService {
 
             resumeMapper.insert(resume);
             log.info("Resume '{}' persisted with id={} (userId={})", originalName, resume.getId(), userId);
+
+            try {
+                agentRunService.saveFromResponse(parsedJson, userId);
+            } catch (Exception logEx) {
+                log.warn("Failed to persist agent_run log for resume '{}': {}", originalName, logEx.getMessage());
+            }
+
             return resume;
 
         } catch (Exception e) {

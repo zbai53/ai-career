@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.aicareer.mapper.AgentRunMapper">
+
+    <resultMap id="agentRunResultMap" type="com.aicareer.model.entity.AgentRun">
+        <id     column="id"             property="id"/>
+        <result column="user_id"        property="userId"/>
+        <result column="agent_name"     property="agentName"/>
+        <result column="input_summary"  property="inputSummary"/>
+        <result column="output_summary" property="outputSummary"/>
+        <result column="status"         property="status"/>
+        <result column="duration_ms"    property="durationMs"/>
+        <result column="token_count"    property="tokenCount"/>
+        <result column="model_name"     property="modelName"/>
+        <result column="error_message"  property="errorMessage"/>
+        <result column="created_at"     property="createdAt"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.aicareer.model.entity.AgentRun"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO agent_runs
+            (user_id, agent_name, input_summary, output_summary, status,
+             duration_ms, token_count, model_name, error_message)
+        VALUES
+            (#{userId}, #{agentName}, #{inputSummary}, #{outputSummary}, #{status},
+             #{durationMs}, #{tokenCount}, #{modelName}, #{errorMessage})
+    </insert>
+
+    <select id="findById" parameterType="long" resultMap="agentRunResultMap">
+        SELECT id, user_id, agent_name, input_summary, output_summary, status,
+               duration_ms, token_count, model_name, error_message, created_at
+        FROM agent_runs
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByAgentName" parameterType="string" resultMap="agentRunResultMap">
+        SELECT id, user_id, agent_name, input_summary, output_summary, status,
+               duration_ms, token_count, model_name, error_message, created_at
+        FROM agent_runs
+        WHERE agent_name = #{agentName}
+        ORDER BY created_at DESC
+    </select>
+
+    <select id="findRecent" resultMap="agentRunResultMap">
+        SELECT id, user_id, agent_name, input_summary, output_summary, status,
+               duration_ms, token_count, model_name, error_message, created_at
+        FROM agent_runs
+        ORDER BY created_at DESC
+        LIMIT #{limit}
+    </select>
+
+</mapper>

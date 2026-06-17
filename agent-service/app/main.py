@@ -79,8 +79,8 @@ async def parse_resume(file: UploadFile = File(...)):
             tmp_path = tmp.name
 
         agent = ResumeAgent()
-        result = agent.parse(tmp_path)
-        return result.model_dump()
+        result, agent_run = agent.parse(tmp_path)
+        return {**result.model_dump(), "agent_run": agent_run}
 
     except UnsupportedFileTypeError as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
@@ -103,10 +103,10 @@ async def parse_jd(body: JDParseRequest):
     try:
         agent = JDAgent()
         if body.text:
-            result = agent.parse_text(body.text)
+            result, agent_run = agent.parse_text(body.text)
         else:
-            result = agent.parse_url(body.url)
-        return result.model_dump()
+            result, agent_run = agent.parse_url(body.url)
+        return {**result.model_dump(), "agent_run": agent_run}
     except JDFetchError as exc:
         return JSONResponse(status_code=500, content={"error": str(exc)})
     except JDParseError as exc:
@@ -125,7 +125,18 @@ async def match_resume_to_jd(body: MatchRequest):
 
     try:
         agent = MatchAgent()
-        result = agent.match(resume, jd)
-        return result.model_dump()
+        result, agent_run = agent.match(resume, jd)
+        return {**result.model_dump(), "agent_run": agent_run}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": f"Match failed: {exc}"})
+
+
+@app.post("/api/agent-runs")
+async def receive_agent_run(body: dict):
+    """
+    Passthrough endpoint for agent-run records.
+
+    Accepts an agent_run dict (as produced by log_agent_run) and returns it
+    as-is. The caller (Spring Boot) is responsible for persisting the record.
+    """
+    return body

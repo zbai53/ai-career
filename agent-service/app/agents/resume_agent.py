@@ -11,6 +11,7 @@ from docx import Document
 from pydantic import ValidationError
 
 from app.models.resume import ParsedResume
+from app.utils.agent_logger import log_agent_run
 
 logger = logging.getLogger(__name__)
 
@@ -77,13 +78,21 @@ class ResumeAgent:
         if not api_key:
             raise EnvironmentError("ANTHROPIC_API_KEY is not set")
         self._client = anthropic.Anthropic(api_key=api_key)
+        self._token_count: int = 0
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def parse(self, file_path: str) -> ParsedResume:
-        """Parse a resume file (.pdf or .docx) and return a validated ParsedResume."""
+    def parse(self, file_path: str) -> tuple[ParsedResume, dict]:
+        """
+        Parse a resume file (.pdf or .docx).
+
+        Returns:
+            (ParsedResume, agent_run_log) — the validated result and a structured
+            log record suitable for embedding in the API response.
+        """
+        self._token_count = 0
         path = Path(file_path)
         suffix = path.suffix.lower()
 
@@ -114,9 +123,21 @@ class ResumeAgent:
         # Always store the full extracted text on the result
         parsed.raw_text = raw_text
 
-        total_ms = (time.perf_counter() - t0) * 1000
-        logger.info("Resume parsed in %.0f ms total (confidence=%.2f)", total_ms, parsed.parse_confidence)
-        return parsed
+        total_ms = int((time.perf_counter() - t0) * 1000)
+        logger.info("Resume parsed in %d ms total (confidence=%.2f)", total_ms, parsed.parse_confidence)
+
+        agent_run = log_agent_run(
+            agent_name="resume_agent",
+            input_summary=path.name[:100],
+            output_summary=(
+                f"Parsed {len(parsed.experience)} experiences, {len(parsed.skills)} skills"
+            ),
+            status="success",
+            duration_ms=total_ms,
+            token_count=self._token_count,
+            model_name=_MODEL,
+        )
+        return parsed, agent_run
 
     # ------------------------------------------------------------------
     # Text extraction helpers
@@ -208,6 +229,7 @@ class ResumeAgent:
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
         usage = response.usage
+        self._token_count += usage.input_tokens + usage.output_tokens
         logger.info(
             "Claude responded in %.0f ms | input_tokens=%d output_tokens=%d",
             elapsed_ms,

@@ -99,7 +99,7 @@ class TestParseTextReturnsValidSchema:
             json.dumps(_VALID_JD_PAYLOAD)
         )
 
-        result = agent.parse_text("Backend Engineer at Acme Corp...")
+        result, agent_run = agent.parse_text("Backend Engineer at Acme Corp...")
 
         assert isinstance(result, ParsedJobDescription)
 
@@ -109,7 +109,7 @@ class TestParseTextReturnsValidSchema:
             json.dumps(_VALID_JD_PAYLOAD)
         )
 
-        result = agent.parse_text("Backend Engineer at Acme Corp...")
+        result, agent_run = agent.parse_text("Backend Engineer at Acme Corp...")
 
         assert result.title == "Backend Engineer"
 
@@ -119,7 +119,7 @@ class TestParseTextReturnsValidSchema:
             json.dumps(_VALID_JD_PAYLOAD)
         )
 
-        result = agent.parse_text("Backend Engineer at Acme Corp...")
+        result, agent_run = agent.parse_text("Backend Engineer at Acme Corp...")
 
         required = [s.name for s in result.skills if s.is_required]
         preferred = [s.name for s in result.skills if not s.is_required]
@@ -133,7 +133,7 @@ class TestParseTextReturnsValidSchema:
             json.dumps(_VALID_JD_PAYLOAD)
         )
 
-        result = agent.parse_text("Backend Engineer at Acme Corp...")
+        result, agent_run = agent.parse_text("Backend Engineer at Acme Corp...")
 
         assert len(result.responsibilities) == 2
         assert any("API" in r for r in result.responsibilities)
@@ -148,7 +148,7 @@ class TestParseTextReturnsValidSchema:
         )
         full_text = "Backend Engineer at Acme Corp. We are hiring a great engineer."
 
-        result = agent.parse_text(full_text)
+        result, agent_run = agent.parse_text(full_text)
 
         assert result.raw_text == full_text
 
@@ -158,7 +158,7 @@ class TestParseTextReturnsValidSchema:
             json.dumps(_VALID_JD_PAYLOAD)
         )
 
-        result = agent.parse_text("Backend Engineer at Acme Corp...")
+        result, agent_run = agent.parse_text("Backend Engineer at Acme Corp...")
 
         assert 0.0 <= result.parse_confidence <= 1.0
 
@@ -167,7 +167,7 @@ class TestParseTextReturnsValidSchema:
         fenced = f"```json\n{json.dumps(_VALID_JD_PAYLOAD)}\n```"
         agent._client.messages.create.return_value = _make_fake_response(fenced)
 
-        result = agent.parse_text("Backend Engineer at Acme Corp...")
+        result, agent_run = agent.parse_text("Backend Engineer at Acme Corp...")
 
         assert isinstance(result, ParsedJobDescription)
         assert result.title == "Backend Engineer"
@@ -190,7 +190,7 @@ class TestParseUrlExtractsText:
         mock_resp = self._mock_requests_get()
 
         with patch("app.agents.jd_agent.requests.get", return_value=mock_resp):
-            result = agent.parse_url("https://acme.com/jobs/backend-engineer")
+            result, agent_run = agent.parse_url("https://acme.com/jobs/backend-engineer")
 
         # The Claude call received text that excludes nav/footer/script content
         call_args = agent._client.messages.create.call_args
@@ -223,7 +223,7 @@ class TestParseUrlExtractsText:
         url = "https://acme.com/jobs/backend-engineer"
 
         with patch("app.agents.jd_agent.requests.get", return_value=mock_resp):
-            result = agent.parse_url(url)
+            result, agent_run = agent.parse_url(url)
 
         assert result.source_url == url
 
@@ -306,7 +306,7 @@ class TestParseRetryOnInvalidJson:
             _make_fake_response(json.dumps(_VALID_JD_PAYLOAD)),
         ]
 
-        result = agent.parse_text("Backend Engineer role...")
+        result, agent_run = agent.parse_text("Backend Engineer role...")
 
         assert isinstance(result, ParsedJobDescription)
         assert agent._client.messages.create.call_count == 2
@@ -345,7 +345,7 @@ class TestParseRetryOnInvalidJson:
             _make_fake_response(json.dumps(_VALID_JD_PAYLOAD)),
         ]
 
-        result = agent.parse_text("Backend Engineer role...")
+        result, agent_run = agent.parse_text("Backend Engineer role...")
 
         assert isinstance(result, ParsedJobDescription)
         assert agent._client.messages.create.call_count == 2
@@ -379,7 +379,7 @@ class TestParseTextShortInput:
         # 20 printable chars
         text = "A" * 20
 
-        result = agent.parse_text(text)
+        result, agent_run = agent.parse_text(text)
 
         assert isinstance(result, ParsedJobDescription)
         agent._client.messages.create.assert_called_once()

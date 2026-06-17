@@ -11,6 +11,7 @@ from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
 from app.models.job_description import ParsedJobDescription
+from app.utils.agent_logger import log_agent_run
 
 logger = logging.getLogger(__name__)
 
@@ -86,34 +87,58 @@ class JDAgent:
         if not api_key:
             raise EnvironmentError("ANTHROPIC_API_KEY is not set")
         self._client = anthropic.Anthropic(api_key=api_key)
+        self._token_count: int = 0
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
-    def parse(self, input_text: str) -> ParsedJobDescription:
+    def parse(self, input_text: str) -> tuple[ParsedJobDescription, dict]:
         """Route to parse_url or parse_text based on whether input looks like a URL."""
         if input_text.startswith("http://") or input_text.startswith("https://"):
             return self.parse_url(input_text)
         return self.parse_text(input_text)
 
-    def parse_text(self, raw_text: str) -> ParsedJobDescription:
-        """Parse a raw job description string into a validated ParsedJobDescription."""
+    def parse_text(self, raw_text: str) -> tuple[ParsedJobDescription, dict]:
+        """
+        Parse a raw job description string.
+
+        Returns:
+            (ParsedJobDescription, agent_run_log)
+        """
         if len(raw_text.strip()) < _MIN_JD_CHARS:
             raise JDParseError(
                 f"JD text too short to parse ({len(raw_text.strip())} chars, minimum {_MIN_JD_CHARS})."
             )
 
+        self._token_count = 0
         t0 = time.perf_counter()
         result = self._call_claude(raw_text, strict=False)
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        logger.info(
-            "JD parsed in %.0f ms (confidence=%.2f)", elapsed_ms, result.parse_confidence
-        )
-        return result
+        duration_ms = int((time.perf_counter() - t0) * 1000)
+        logger.info("JD parsed in %d ms (confidence=%.2f)", duration_ms, result.parse_confidence)
 
-    def parse_url(self, url: str) -> ParsedJobDescription:
-        """Fetch a job posting URL, extract its text content, then parse it."""
+        agent_run = log_agent_run(
+            agent_name="jd_agent",
+            input_summary=raw_text[:100],
+            output_summary=(
+                f"Parsed {result.title or 'Unknown'} at {result.company or 'Unknown'}, "
+                f"{len(result.skills)} skills"
+            ),
+            status="success",
+            duration_ms=duration_ms,
+            token_count=self._token_count,
+            model_name=_MODEL,
+        )
+        return result, agent_run
+
+    def parse_url(self, url: str) -> tuple[ParsedJobDescription, dict]:
+        """
+        Fetch a job posting URL, extract its text content, then parse it.
+
+        Returns:
+            (ParsedJobDescription, agent_run_log)
+        """
+        self._token_count = 0
         t0 = time.perf_counter()
         raw_text = self._fetch_text_from_url(url)
         fetch_ms = (time.perf_counter() - t0) * 1000
@@ -122,13 +147,26 @@ class JDAgent:
         result = self._call_claude(raw_text, strict=False)
         result.source_url = url
 
-        total_ms = (time.perf_counter() - t0) * 1000
+        duration_ms = int((time.perf_counter() - t0) * 1000)
         logger.info(
-            "JD from URL parsed in %.0f ms total (confidence=%.2f)",
-            total_ms,
+            "JD from URL parsed in %d ms total (confidence=%.2f)",
+            duration_ms,
             result.parse_confidence,
         )
-        return result
+
+        agent_run = log_agent_run(
+            agent_name="jd_agent",
+            input_summary=url[:100],
+            output_summary=(
+                f"Parsed {result.title or 'Unknown'} at {result.company or 'Unknown'}, "
+                f"{len(result.skills)} skills"
+            ),
+            status="success",
+            duration_ms=duration_ms,
+            token_count=self._token_count,
+            model_name=_MODEL,
+        )
+        return result, agent_run
 
     # ------------------------------------------------------------------
     # Web fetch helper
@@ -198,6 +236,7 @@ class JDAgent:
         elapsed_ms = (time.perf_counter() - t0) * 1000
 
         usage = response.usage
+        self._token_count += usage.input_tokens + usage.output_tokens
         logger.info(
             "Claude responded in %.0f ms | input_tokens=%d output_tokens=%d",
             elapsed_ms,
