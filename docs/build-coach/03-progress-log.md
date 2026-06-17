@@ -5,6 +5,20 @@
 
 ---
 
+## Day 14 — 2025-06-17 (Phase 2: Match Agent + Database)
+
+**Completed:**
+- Added agent_runs observability: every Agent call now logs agent_name, duration_ms, token_count, model_name, status
+- Created AgentRun entity, mapper, and AgentRunController (GET /api/agent-runs/recent)
+- Spring Boot controllers now persist agent_run logs to database after each Agent call
+- Updated resume_agent, jd_agent, match_agent to return (result, agent_run) tuple
+- Fixed all tests to handle new tuple return format (75 tests passing)
+- Created match evaluation with 5 resume-JD pairs and documented results
+
+**Blockers:** Agent return type change broke 20 existing tests (fixed by unpacking tuple)
+
+**Next:** Day 15 — Phase 2 wrap-up, tune scoring weights, buffer day
+
 ## Day 13 — 2025-06-17 (Phase 2: Match Agent + Database)
 
 **Completed:**
