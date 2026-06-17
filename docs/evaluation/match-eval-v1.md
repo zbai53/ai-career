@@ -2,13 +2,14 @@
 
 **Date:** 2026-06-17  
 **Model:** `claude-haiku-4-5-20251001`  
-**Script:** `agent-service/tests/run_match_tuning.py`
+**Script:** `agent-service/tests/run_match_tuning.py`  
+**Candidate fixture:** Jordan Lee — full-stack engineer, ~2 years experience
 
 ---
 
 ## 1. Scoring Algorithm
 
-### 1.1 Overall Score
+### Overall formula
 
 ```
 overall_score = skill_score × 0.45
@@ -16,296 +17,292 @@ overall_score = skill_score × 0.45
              + keyword_score × 0.25
 ```
 
-All three component scores are on a 0–100 scale. Weights reflect the assumption
-that technical skill alignment is the strongest hiring signal, followed by
-experience depth, then keyword coverage.
+All three components are on a 0–100 scale.
 
 ---
 
-### 1.2 Skill Score (0–100)
+### Skill score — 45% weight (0–100)
 
-Computed in `_compute_skill_score()` using weighted matching.
+Computed purely in Python; no LLM involved.
 
 **Match weights per JD skill:**
 
-| Match type | Weight |
-|---|---|
-| Exact match after normalisation (incl. synonyms) | 1.0 |
-| Whole-word token containment (partial / specialisation) | 0.5 |
-| No relationship | 0.0 |
+| Match type | Weight | Example |
+|---|---|---|
+| Exact match after normalisation | 1.0 | `"k8s"` vs `"Kubernetes"` |
+| Whole-word token containment | 0.5 | `"React Native"` vs `"React"` |
+| No relationship | 0.0 | `"Java"` vs `"JavaScript"` |
 
-**Required skill contribution (max 70 pts):**
+**Synonym dictionary** — 137-entry `SKILL_SYNONYMS` dict maps every known alias
+(lowercased) to a canonical form before comparison:
+
 ```
-required_score = Σ best_weight(skill) / total_required × 70
+"k8s" / "kubernetes"            → "kubernetes"
+"js" / "es6" / "javascript"    → "javascript"
+"postgres" / "pg" / "psql"     → "postgresql"
+"springboot" / "spring framework" → "spring boot"
+"tf"                            → "tensorflow"
+"sklearn"                       → "scikit-learn"
 ```
 
-**Preferred skill contribution (max 30 pts):**
+**Partial matching** — a word-boundary regex `(?<![a-z0-9])term(?![a-z0-9])`
+prevents `"java"` from matching inside `"javascript"` while correctly letting
+`"react"` match inside `"react native"`. Minimum 3-character token length.
+
+**Score composition:**
+
 ```
-preferred_score = Σ best_weight(skill) / total_preferred × 30
+required_score  = Σ best_weight(skill) / count(required)  × 70
+preferred_score = Σ best_weight(skill) / count(preferred) × 30
+skill_score     = required_score + preferred_score
 ```
 
-If a category has no skills at all, its full credit is awarded automatically
-(e.g. no required skills → 70 pts free).
-
-**Skill normalisation** (`normalize_skill()`):  
-A 137-entry `SKILL_SYNONYMS` dict maps every known alias (lowercase) to a
-canonical form before comparison. Examples:
-- `"k8s"` → `"kubernetes"`
-- `"js"`, `"es6"`, `"es2015"` → `"javascript"`
-- `"postgres"`, `"pg"`, `"psql"` → `"postgresql"`
-- `"springboot"`, `"spring framework"` → `"spring boot"`
-
-**Partial matching** (`_word_contained()`):  
-A word-boundary regex `(?<![a-z0-9])term(?![a-z0-9])` is used so that
-`"React Native"` matches `"React"` (partial, 0.5) but `"Java"` does **not**
-match `"JavaScript"` (no boundary). Minimum length of 3 chars required to avoid
-spurious hits from short tokens like `"go"`.
+If a category has no skills, its full points are awarded (no penalty for
+JDs that omit preferred or required lists entirely).
 
 ---
 
-### 1.3 Experience Score (0–100)
+### Experience score — 30% weight (0–100)
 
-Computed as: `experience_score = min(100, years_score + relevance × 30)`
+Computed purely in Python; no LLM involved.
 
-**Years score** (`_compute_experience_score_base()`):
+```
+experience_score = min(100, years_score + technology_relevance × 30)
+```
 
-| Gap = JD min − candidate years | Score |
+**Years score** (`_compute_experience_score_base`):
+
+| gap = JD minimum − candidate years | Score |
 |---|---|
-| ≤ −2 (exceeds by 2+ years) | 70 |
-| (−2, 0] (meets requirement) | 60 |
-| (0, 1] (within 1 year short) | 45 |
-| (1, 2] (1–2 years short) | 30 |
-| > 2 (more than 2 years short) | 15 |
-| No JD requirement specified | 60 (neutral) |
+| ≤ −2 — exceeds by 2+ years | 70 |
+| (−2, 0] — meets requirement | 60 |
+| (0, 1] — within 1 year short | 45 |
+| (1, 2] — 1–2 years short | 30 |
+| > 2 — more than 2 years short | 15 |
+| No requirement specified | 60 (neutral) |
 
-**Technology relevance** (`calculate_technology_relevance()`):  
-Counts how many JD *required* skills appear in any experience entry's
-`technologies` list (after normalisation). Returns a ratio 0.0–1.0.
-Adds up to 30 bonus points. Returns 0.0 when there are no required skills
-(no bonus applies).
+**Technology relevance bonus** (0–30 pts) — fraction of JD *required* skills
+that appear in any experience entry's `technologies` list (after normalisation).
+Returns 0 when there are no required skills.
 
-**Overlap merging** (`calculate_years_of_experience()`):  
-Converts all experience `start_date`/`end_date` fields (YYYY-MM) to date
-intervals, substitutes today for `is_current=True` or null end dates, then
-merges overlapping intervals before summing. This prevents counting overlapping
-internships or consulting work twice.
+**Overlap merging** — `calculate_years_of_experience()` converts YYYY-MM
+start/end pairs to date intervals, substitutes today for current roles,
+then merges overlapping intervals before summing, so concurrent jobs aren't
+double-counted.
 
 ---
 
-### 1.4 Keyword Score (0–100)
+### Keyword score — 25% weight (0–100)
 
-Computed in `_compute_keyword_score()`.
+Computed purely in Python; no LLM involved.
 
 ```
 keyword_score = matched_count / total_jd_keywords × 100
 ```
 
 Case-insensitive substring search of each JD keyword in `resume.raw_text`.
-Full score (100) when the JD has no keywords. Measures ATS keyword coverage
-rather than semantic skill alignment.
+Full score when the JD defines no keywords.
+
+**Limitation:** this is a literal text-search, not synonym-aware. `"ML"` in
+raw_text will not match a JD keyword of `"machine learning"`.
 
 ---
 
-### 1.5 Gap Analysis (Claude)
+### Gap analysis — Claude only
 
-After all numeric scores are computed, a single Claude call (`_call_gap_analysis`)
-generates:
-- `missing_required_skills` / `missing_preferred_skills`
-- `improvement_suggestions` (3–5 resume-rewrite actions)
-- `interview_focus_areas` (3–5 study topics)
-- `overall_assessment` (2–3 sentence narrative)
-
-This is the only non-deterministic part of the pipeline. A retry with a strict
-prompt handles bad JSON; a local fallback dict is returned if both attempts fail.
+After all numeric scores are computed, one Claude call generates:
+`missing_required_skills`, `missing_preferred_skills`,
+`improvement_suggestions`, `interview_focus_areas`, and `overall_assessment`.
+A strict-prompt retry handles bad JSON; a local fallback dict is returned on
+double failure. Token count from both calls is tracked in the agent_run log.
 
 ---
 
-## 2. Candidate Profile (Test Fixture)
+## 2. Candidate Fixture
 
 **Name:** Jordan Lee  
-**Years of experience:** ~2 years (single role, 2024-06 → present)  
-**Background:** Full-stack engineer, backend-leaning
-
-**Skills (13):**
-Java, Python, JavaScript, TypeScript, React, Spring Boot, PostgreSQL, SQL,
-Docker, Git, REST API, CI/CD, HTML/CSS
-
-**Experience technologies:**
-Java, Spring Boot, PostgreSQL, React, JavaScript, TypeScript, REST API, Git, SQL, Docker
-
-**Raw text keywords:**
-Java, Python, JavaScript, TypeScript, React, Spring Boot, PostgreSQL, SQL,
-Docker, Git, REST API, CI/CD, microservices, backend, development, HTML, CSS, agile, scrum
+**Total experience:** ~2.04 years (one current role, 2024-06 → present)  
+**Skills (13):** Java, Python, JavaScript, TypeScript, React, Spring Boot,
+PostgreSQL, SQL, Docker, Git, REST API, CI/CD, HTML/CSS  
+**Experience technologies:** Java, Spring Boot, PostgreSQL, React, JavaScript,
+TypeScript, REST API, Git, SQL, Docker  
+**Raw text keywords:** Java Python JavaScript TypeScript React Spring Boot
+PostgreSQL SQL Docker Git REST API CI/CD microservices backend development
+HTML CSS agile scrum
 
 ---
 
-## 3. Test Pairs and Expected Scores
+## 3. Test Results
 
-Numeric scores are **deterministic** (pure Python). The expected ranges below
-are derived analytically from the algorithm. The `overall_assessment` text
-varies per Claude run.
+All five pairs were run on 2026-06-17. Numeric scores are deterministic
+(pure Python); the `overall_assessment` excerpts are from the Claude call.
 
-### Pair 1 — Backend Java Engineer (expected overall: 60–80)
+### Pair 1 — Backend Java Engineer (expected 60–80)
 
 **JD:** FinCo Backend Java Engineer, min 3 years  
-**Required skills:** Java, Spring Boot, PostgreSQL, REST API, Kafka (5)  
-**Preferred skills:** Docker, AWS, Kubernetes (3)
+**Required:** Java, Spring Boot, PostgreSQL, REST API, Kafka  
+**Preferred:** Docker, AWS, Kubernetes
 
-| Dimension | Expected score | Reasoning |
+| Dimension | Score | Notes |
 |---|---|---|
-| Skill | ~66 | 4/5 required (Kafka missing) + 1/3 preferred (Docker) |
-| Experience | ~69 | years_score=45 (gap=1yr), tech_rel=0.8 (4/5 req in exp) → 45+24 |
-| Keyword | ~87 | 7/8 keywords in raw_text (Java, Spring Boot, Postgres, REST API, microservices, Docker, CI/CD) |
-| **Overall** | **~72** | 66×0.45 + 69×0.30 + 87×0.25 |
+| Skill | 66.0 | 4/5 required matched (Kafka missing); 1/3 preferred (Docker) |
+| Experience | 69.0 | years_score=45 (gap=1yr), tech_rel=0.8 (4/5 req in exp techs) → 45+24 |
+| Keyword | 87.5 | 7/8 keywords in raw_text; only "Kafka" absent |
+| **Overall** | **72.3** | within expected 60–80 ✓ |
 
-**Key gap:** Kafka not on resume or in experience technologies.
+**Top missing required skills:** Kafka  
+**Assessment:** *"Jordan is a solid mid-level backend candidate with strong fundamentals in Java, Spring Boot, Postgre…"*
 
 ---
 
-### Pair 2 — Frontend React Engineer (expected overall: 50–70)
+### Pair 2 — Frontend React Engineer (expected 50–70)
 
 **JD:** UX Startup Frontend React Engineer, min 2 years  
-**Required skills:** React, TypeScript, JavaScript, CSS, HTML (5)  
-**Preferred skills:** Vue, Angular, GraphQL, Jest, Storybook (5)
+**Required:** React, TypeScript, JavaScript, CSS, HTML  
+**Preferred:** Vue, Angular, GraphQL, Jest, Storybook
 
-| Dimension | Expected score | Reasoning |
+| Dimension | Score | Notes |
 |---|---|---|
-| Skill | ~56 | React/TS/JS exact (3×1.0) + CSS/HTML partial from "HTML/CSS" (2×0.5) = 4/5 req; 0/5 pref |
-| Experience | ~78 | years_score=60 (meets 2yr), tech_rel=0.6 (React/JS in exp, TypeScript too, but CSS/HTML not in exp techs) → 60+18 |
-| Keyword | ~50 | React/TS/JS + "HTML"/"CSS" substring match in raw_text (5/10 keywords) |
-| **Overall** | **~61** | 56×0.45 + 78×0.30 + 50×0.25 |
+| Skill | 56.0 | React/TS/JS exact (3×1.0); CSS and HTML each 0.5 from "HTML/CSS"; 0/5 preferred |
+| Experience | 78.0 | years_score=60 (meets 2yr), tech_rel=0.6 (React/JS/TS in exp; CSS/HTML absent) → 60+18 |
+| Keyword | 50.0 | React/TS/JS + "HTML"/"CSS" substring hit (5/10); responsive, accessibility, Jest absent |
+| **Overall** | **61.1** | within expected 50–70 ✓ |
 
-**Key gaps:** Pure CSS/HTML depth, no testing (Jest), no component library
-experience (Vue, Angular, Storybook). Preferred skills score is 0/5.
+**Top missing required skills:** none (all required have at least partial weight)  
+**Assessment:** *"Jordan is a solid match with all required React, TypeScript, and JavaScript skills and 2+ years of r…"*
+
+> **Note:** Claude rated this as "no missing required skills" because it considered
+> the resume's HTML/CSS entry sufficient for both CSS and HTML. The numeric skill
+> score (56) better reflects the partial nature of that match (0.5 weight each).
 
 ---
 
-### Pair 3 — Data Scientist (expected overall: 20–40)
+### Pair 3 — Data Scientist (expected 20–40)
 
 **JD:** Analytics Inc Data Scientist, min 3 years  
-**Required skills:** Python, Machine Learning, PyTorch, scikit-learn, Statistics (5)  
-**Preferred skills:** SQL, AWS, Spark, Pandas, NLP (5)
+**Required:** Python, Machine Learning, PyTorch, scikit-learn, Statistics  
+**Preferred:** SQL, AWS, Spark, Pandas, NLP
 
-| Dimension | Expected score | Reasoning |
+| Dimension | Score | Notes |
 |---|---|---|
-| Skill | ~20 | Only Python (1/5 req) + SQL (1/5 pref) match |
-| Experience | ~45 | years_score=45 (gap=1yr), tech_rel=0.0 — Python is a resume *skill* but not listed in experience `technologies`, so 0/5 req match → no bonus |
-| Keyword | ~10 | Only Python in raw_text; no ML/stats keywords |
-| **Overall** | **~25** | 20×0.45 + 45×0.30 + 10×0.25 |
+| Skill | 20.0 | Only Python matched (1/5 req = 14pts) + SQL (1/5 pref = 6pts) |
+| Experience | 45.0 | years_score=45 (gap=1yr), tech_rel=0.0 (Python in skills but not exp techs) → 45+0 |
+| Keyword | 10.0 | Only "Python" in raw_text; no ML/stats vocabulary |
+| **Overall** | **25.0** | within expected 20–40 ✓ |
 
-**Key gaps:** Entire ML domain. Resume has Python but none of the specialised
-stack (PyTorch, scikit-learn, Pandas, statistics). Experience score is
-misleadingly moderate because Python appears in technologies.
+**Top missing required skills:** Machine Learning, PyTorch, scikit-learn  
+**Assessment:** *"Jordan is a junior full-stack engineer (~2 years) applying for a Data Scientist role requiring 3+ ye…"*
 
 ---
 
-### Pair 4 — DevOps Engineer (expected overall: 30–50)
+### Pair 4 — DevOps Engineer (expected 30–50)
 
 **JD:** InfraOps DevOps Engineer, min 3 years  
-**Required skills:** Docker, Kubernetes, Terraform, Linux, CI/CD (5)  
-**Preferred skills:** AWS, Jenkins, Ansible, Helm, Prometheus (5)
+**Required:** Docker, Kubernetes, Terraform, Linux, CI/CD  
+**Preferred:** AWS, Jenkins, Ansible, Helm, Prometheus
 
-| Dimension | Expected score | Reasoning |
+| Dimension | Score | Notes |
 |---|---|---|
-| Skill | ~28 | Docker+CI/CD (2/5 req); 0/5 preferred |
-| Experience | ~51 | years_score=45 (gap=1yr), tech_rel=0.2 (only Docker in exp) → 45+6 |
-| Keyword | ~17 | Docker+CI/CD in raw_text (2/12 keywords) |
-| **Overall** | **~32** | 28×0.45 + 51×0.30 + 17×0.25 |
+| Skill | 28.0 | Docker + CI/CD matched (2/5 req = 28pts); 0/5 preferred |
+| Experience | 51.0 | years_score=45 (gap=1yr), tech_rel=0.2 (Docker only in exp) → 45+6 |
+| Keyword | 16.7 | Only "Docker" and "CI/CD" in raw_text (2/12) |
+| **Overall** | **32.1** | within expected 30–50 ✓ |
 
-**Key gaps:** Kubernetes, Terraform, Linux (ops-layer tools), cloud platforms,
-and all monitoring/orchestration tooling. This is a domain mismatch rather than
-a seniority gap.
+**Top missing required skills:** Kubernetes, Terraform, Linux  
+**Assessment:** *"Jordan is a junior full-stack engineer with relevant containerization and CI/CD exposure, but signif…"*
 
 ---
 
-### Pair 5 — Junior Full Stack Developer (expected overall: 70–90)
+### Pair 5 — Junior Full Stack Developer (expected 70–90)
 
 **JD:** GrowthApp Junior Full Stack, min 1 year  
-**Required skills:** JavaScript, React, REST API, SQL (4)  
-**Preferred skills:** TypeScript, Git, CSS, Node.js (4)
+**Required:** JavaScript, React, REST API, SQL  
+**Preferred:** TypeScript, Git, CSS, Node.js
 
-| Dimension | Expected score | Reasoning |
+| Dimension | Score | Notes |
 |---|---|---|
-| Skill | ~89 | 4/4 required (70) + 2.5/4 preferred (TS, Git exact; CSS partial) = 89 |
-| Experience | ~100 | years_score=60 (meets 1yr requirement), tech_rel=1.0 (all 4 req in exp) → min(100, 90) |
-| Keyword | ~82 | JS/React/REST API/SQL/TypeScript/Git/CSS/HTML/agile in raw_text (9/11 keywords) |
-| **Overall** | **~87** | 89×0.45 + 100×0.30 + 82×0.25 |
+| Skill | 88.8 | 4/4 required (70pts) + TypeScript/Git exact + CSS partial from HTML/CSS (2.5/4 pref × 30 = 18.75) |
+| Experience | 90.0 | years_score=60 (meets 1yr), tech_rel=1.0 (all 4 req in exp techs) → min(100, 60+30) |
+| Keyword | 81.8 | JS/React/REST API/SQL/TS/Git/CSS/HTML/agile in raw_text (9/11) |
+| **Overall** | **87.4** | within expected 70–90 ✓ |
 
-**Key gap:** Node.js (preferred) not on resume. The "junior" framing converts
-the candidate's relative inexperience into a positive: they comfortably exceed
-the 1-year bar.
+**Top missing required skills:** none  
+**Assessment:** *"Jordan is an exceptionally strong match for this Junior Full Stack Developer role, with all required…"*
 
 ---
 
 ## 4. Summary Table
 
-| Pair | JD Title | Exp. Range | Skill | Exp | KW | Overall |
+| Pair | Expected | Skill | Exp | KW | Overall | In range? |
 |---|---|---|---|---|---|---|
-| 1 | Backend Java Engineer | 60–80 | ~66 | ~69 | ~87 | ~72 |
-| 2 | Frontend React Engineer | 50–70 | ~56 | ~78 | ~50 | ~61 |
-| 3 | Data Scientist | 20–40 | ~20 | ~45 | ~10 | ~25 |
-| 4 | DevOps Engineer | 30–50 | ~28 | ~51 | ~17 | ~32 |
-| 5 | Junior Full Stack | 70–90 | ~89 | ~100 | ~82 | ~87 |
+| 1 — Backend Java Engineer | 60–80 | 66.0 | 69.0 | 87.5 | **72.3** | ✓ |
+| 2 — Frontend React Engineer | 50–70 | 56.0 | 78.0 | 50.0 | **61.1** | ✓ |
+| 3 — Data Scientist | 20–40 | 20.0 | 45.0 | 10.0 | **25.0** | ✓ |
+| 4 — DevOps Engineer | 30–50 | 28.0 | 51.0 | 16.7 | **32.1** | ✓ |
+| 5 — Junior Full Stack | 70–90 | 88.8 | 90.0 | 81.8 | **87.4** | ✓ |
+
+All five pairs landed within their expected ranges on the first real run.
 
 ---
 
 ## 5. Observations
 
-### What works well
+### What feels right
 
-1. **Domain mismatch penalty is meaningful.** Pairs 3 and 4 score distinctly
-   below pairs where the candidate actually works in the same domain. The gap
-   isn't just experience-based; the skill and keyword dimensions together create
-   a clear signal that these are wrong fits.
+**Domain mismatch penalty is clear.** Pairs 3 and 4 score 25 and 32 respectively
+against a candidate who has no ML or infrastructure background. The 40+ point gap
+from pair 1 (72) and pair 5 (87) reflects a genuine domain difference, not just
+a seniority gap.
 
-2. **Seniority sensitivity.** Pair 1 vs Pair 5 demonstrate the algorithm's
-   ability to distinguish between a role the candidate is slightly under-qualified
-   for (72) vs one where they are comfortably over-qualified (80). The 8-point
-   spread comes primarily from the experience dimension and skill depth.
+**Seniority is correctly differentiated.** Pair 1 (72) vs Pair 5 (87) differ
+primarily in the experience dimension and preferred-skill coverage. The candidate
+is moderately under-qualified for the senior role and comfortably over-qualified
+for the junior one — both of which the scores reflect.
 
-3. **Synonym matching prevents false negatives.** Without `SKILL_SYNONYMS`,
-   "k8s" vs "Kubernetes", "postgres" vs "PostgreSQL", etc. would all score zero,
-   grossly underestimating overlaps.
+**Synonym matching prevents obvious false negatives.** Without the synonym dict,
+`k8s` vs `Kubernetes`, `postgres` vs `PostgreSQL`, and `js` vs `JavaScript`
+would all score 0. The 137-entry dict eliminates the most common alias gaps.
 
-4. **Partial match (0.5 weight) handles specialisation correctly.** "HTML/CSS"
-   on the resume correctly gives partial credit for both "CSS" and "HTML" as JD
-   requirements, rather than counting as a complete miss.
+**The Java/JavaScript boundary holds.** The word-boundary regex correctly gives
+`"Java"` zero weight against `"JavaScript"` even though `"java"` is a substring.
+This was a known bug before the regex fix.
 
-### Known limitations and potential improvements
+### What feels off
 
-1. **Experience score is inflated for Pairs 3 and 4** (~51 each despite domain
-   mismatch). The tech-relevance bonus adds 6 pts because Python/Docker appear in
-   experience even though the candidate has no practical ML or ops experience.
-   *Potential fix:* Weight technology relevance by relevance of the entire
-   experience entry to the JD domain (could use Claude or an embedding similarity).
+**Pair 2 experience score (78) is too generous for a frontend role.**
+The candidate's ~2 years meet the 2-year minimum (years_score = 60), and React,
+JavaScript, and TypeScript appear in the experience technologies list (+18 tech
+bonus). But the work is backend-oriented; the candidate has never shipped a
+frontend-focused product. The algorithm has no concept of role-type alignment
+within the experience dimension.
 
-2. **Keyword score is a blunt instrument.** It is a pure substring match in
-   `raw_text`, so it rewards candidates who list many tools in their raw text
-   section without context. A keyword that appears once in a single line is
-   indistinguishable from one the candidate has 5 years of experience with.
-   *Potential fix:* Score keywords weighted by how many times they appear across
-   different experience entries.
+**Pair 3 experience score (45) is misleadingly moderate for a data science role.**
+Python is on the resume skills list but not in the experience technologies list,
+so technology relevance correctly returns 0. However, the years_score alone (45)
+suggests a mild experience shortfall when the real issue is a complete domain
+mismatch. A score around 15–20 would feel more accurate.
 
-3. **No normalisation of keyword matching.** "machine learning" in a JD keyword
-   list won't match "ML" or "ml" in raw_text since keyword matching is substring,
-   not synonym-based. This creates an asymmetry with the skill score which *does*
-   use synonyms.
-   *Potential fix:* Apply `normalize_skill()` to both JD keywords and tokens
-   extracted from raw_text before matching.
+**Pair 4 experience score (51) is also inflated.** Docker appears in the
+experience technologies (contributing +6 relevance bonus), but the candidate's
+DevOps exposure is incidental — Docker was used for local development, not
+infrastructure management. A single tool match in experience tech shouldn't
+produce the same tech-relevance score as genuine ops work.
 
-4. **Experience years are computed purely from dates, not depth.** Two candidates
-   with identical years but wildly different role seniority (staff eng vs intern)
-   receive the same years_score.
-   *Potential fix:* Incorporate title seniority signals (junior/mid/senior/staff)
-   extracted from the parsed resume.
+**Keyword matching asymmetry with skill matching.** The skill score uses
+synonym normalisation (`"k8s"` → `"kubernetes"`) but the keyword score is a
+raw substring search. If a JD keyword is `"machine learning"` and the resume
+only writes `"ML"`, the keyword score takes the miss even though the skill
+score with synonyms would catch it. This creates an inconsistency.
 
-5. **Claude gap analysis is the only narrative layer.** If the Claude call fails,
-   the fallback returns no suggestions. The numeric scores are always available,
-   but the user-facing text is fully dependent on LLM availability.
-   *Potential fix:* Pre-generate suggestion templates from the missing-skill lists
-   as a deterministic fallback.
+---
 
-6. **No semantic similarity.** Skills like "software engineering" and "backend
-   development" that are semantically close score 0 against each other. A future
-   version could use embedding-based similarity (via Qdrant, already in the
-   stack) for a second-pass semantic re-rank.
+## 6. Known Limitations
+
+| Limitation | Impact | Potential fix |
+|---|---|---|
+| Keyword matching is literal text search | `"ML"` won't match `"machine learning"` in keywords | Apply `normalize_skill()` to keyword matching too, or use token-level synonym expansion |
+| No semantic skill similarity | `"backend development"` and `"server-side engineering"` score 0 against each other | Embedding-based similarity via Qdrant (already in the stack) |
+| Experience depth not captured | 2 years as a staff engineer vs 2 years in a bootcamp project score identically | Extract seniority signals (title, team size, scope) from parsed experience |
+| Technology relevance is binary | One Docker mention gives the same +6 pts whether Docker is incidental or central | Weight by how many distinct experience entries mention the technology |
+| No role-type alignment in experience | A frontend JD matched to a backend resume gets a high experience score if total years meet the bar | Add JD role-type classification and penalise cross-domain experience |
+| Claude gap analysis is the only narrative layer | On LLM failure, improvement suggestions are empty | Pre-generate template suggestions from missing-skill lists as deterministic fallback |

@@ -15,5 +15,7 @@ public interface AgentRunMapper {
 
     List<AgentRun> findByAgentName(String agentName);
 
+    List<AgentRun> findByUserId(Long userId);
+
     List<AgentRun> findRecent(@Param("limit") int limit);
 }

@@ -49,12 +49,12 @@
 
 > Score how well a resume fits a JD. Persist everything.
 
-- [ ] **Day 10:** Write Flyway migration scripts for all core tables: `users`, `resumes`, `job_descriptions`, `match_results`, `interview_sessions`, `agent_runs`. Run migrations.
-- [ ] **Day 11:** Write MyBatis mappers for basic CRUD on all tables. Write a simple integration test that inserts and reads.
-- [ ] **Day 12:** Implement Match Agent: skill matching (required vs present, missing, extra), experience matching (years, industry relevance), keyword coverage (JD keywords found in resume).
-- [ ] **Day 13:** Implement scoring algorithm: weighted multi-dimension score (0–100). Generate gap analysis JSON: what's missing, what can be improved via rewriting, what requires real experience.
-- [ ] **Day 14:** Spring Boot: `POST /api/match` (trigger matching), `GET /api/match/{id}` (get results). Persist results to DB. Add `agent_runs` logging for observability.
-- [ ] **Day 15:** Test with 5 resume-JD pairs. Tune scoring weights. Write evaluation notes in `docs/evaluation/`. Buffer day.
+- [x] **Day 10:** Write Flyway migration scripts for all core tables: `users`, `resumes`, `job_descriptions`, `match_results`, `interview_sessions`, `agent_runs`. Run migrations.
+- [x] **Day 11:** Write MyBatis mappers for basic CRUD on all tables. Write a simple integration test that inserts and reads.
+- [x] **Day 12:** Implement Match Agent: skill matching (required vs present, missing, extra), experience matching (years, industry relevance), keyword coverage (JD keywords found in resume).
+- [x] **Day 13:** Implement scoring algorithm: weighted multi-dimension score (0–100). Generate gap analysis JSON: what's missing, what can be improved via rewriting, what requires real experience.
+- [x] **Day 14:** Spring Boot: `POST /api/match` (trigger matching), `GET /api/match/{id}` (get results). Persist results to DB. Add `agent_runs` logging for observability.
+- [x] **Day 15:** Test with 5 resume-JD pairs. Tune scoring weights. Write evaluation notes in `docs/evaluation/`. Buffer day.
 
 **Understand before moving on:**
 - Why use Flyway for database migrations instead of manual SQL?
