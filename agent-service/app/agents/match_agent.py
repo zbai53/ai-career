@@ -1,68 +1,266 @@
 import json
 import logging
 import os
+import re
 import time
 from datetime import date
 
 import anthropic
 from pydantic import ValidationError
 
-from app.models.job_description import ParsedJobDescription
+from app.models.job_description import JDSkillRequirement, ParsedJobDescription
 from app.models.match_result import MatchResult
-from app.models.resume import ParsedResume
+from app.models.resume import ParsedResume, ResumeExperience
 
 logger = logging.getLogger(__name__)
 
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 2048
 
-# Common synonyms for skill matching: each tuple is a group of equivalent terms.
-# If a resume has any term in a group and the JD requires any term in the same
-# group, it counts as a match.
-_SKILL_SYNONYMS: list[frozenset[str]] = [
-    frozenset({"javascript", "js"}),
-    frozenset({"typescript", "ts"}),
-    frozenset({"postgresql", "postgres", "psql"}),
-    frozenset({"kubernetes", "k8s"}),
-    frozenset({"amazon web services", "aws"}),
-    frozenset({"google cloud platform", "gcp", "google cloud"}),
-    frozenset({"microsoft azure", "azure"}),
-    frozenset({"machine learning", "ml"}),
-    frozenset({"artificial intelligence", "ai"}),
-    frozenset({"continuous integration", "ci", "ci/cd", "continuous deployment", "cd"}),
-    frozenset({"react", "reactjs", "react.js"}),
-    frozenset({"vue", "vuejs", "vue.js"}),
-    frozenset({"node", "nodejs", "node.js"}),
-    frozenset({"spring", "spring boot", "spring framework"}),
-    frozenset({"natural language processing", "nlp"}),
-    frozenset({"large language model", "llm", "large language models", "llms"}),
-]
+# ---------------------------------------------------------------------------
+# Skill normalisation
+# ---------------------------------------------------------------------------
+# Maps every known variant (lowercased) to its canonical form.
+# Canonical forms are themselves included so the dict is self-contained.
+
+SKILL_SYNONYMS: dict[str, str] = {
+    # JavaScript / TypeScript
+    "js": "javascript",
+    "javascript": "javascript",
+    "es6": "javascript",
+    "es2015": "javascript",
+    "ts": "typescript",
+    "typescript": "typescript",
+    # Python
+    "py": "python",
+    "python": "python",
+    "python3": "python",
+    "python 3": "python",
+    # Spring
+    "spring": "spring boot",
+    "spring boot": "spring boot",
+    "springboot": "spring boot",
+    "spring framework": "spring boot",
+    # Kubernetes
+    "k8s": "kubernetes",
+    "kubernetes": "kubernetes",
+    # PostgreSQL
+    "postgres": "postgresql",
+    "postgresql": "postgresql",
+    "pg": "postgresql",
+    "psql": "postgresql",
+    # Node.js
+    "node": "node.js",
+    "nodejs": "node.js",
+    "node.js": "node.js",
+    # React
+    "react": "react",
+    "reactjs": "react",
+    "react.js": "react",
+    # MongoDB
+    "mongo": "mongodb",
+    "mongodb": "mongodb",
+    # AWS
+    "aws": "aws",
+    "amazon web services": "aws",
+    "amazon aws": "aws",
+    # GCP
+    "gcp": "gcp",
+    "google cloud": "gcp",
+    "google cloud platform": "gcp",
+    # Docker
+    "docker": "docker",
+    "containerization": "docker",
+    "container": "docker",
+    # CI/CD
+    "ci/cd": "ci/cd",
+    "cicd": "ci/cd",
+    "continuous integration": "ci/cd",
+    "continuous deployment": "ci/cd",
+    "continuous delivery": "ci/cd",
+    # Machine / Deep learning
+    "ml": "machine learning",
+    "machine learning": "machine learning",
+    "dl": "deep learning",
+    "deep learning": "deep learning",
+    # Azure
+    "azure": "azure",
+    "microsoft azure": "azure",
+    # Terraform
+    "terraform": "terraform",
+    "infrastructure as code": "terraform",
+    "iac": "terraform",
+    # Vue
+    "vue": "vue",
+    "vuejs": "vue",
+    "vue.js": "vue",
+    # Angular
+    "angular": "angular",
+    "angularjs": "angular",
+    "angular.js": "angular",
+    # Artificial intelligence
+    "ai": "artificial intelligence",
+    "artificial intelligence": "artificial intelligence",
+    # NLP
+    "nlp": "nlp",
+    "natural language processing": "nlp",
+    # LLM
+    "llm": "llm",
+    "llms": "llm",
+    "large language model": "llm",
+    "large language models": "llm",
+    # Go
+    "go": "go",
+    "golang": "go",
+    # Ruby on Rails
+    "rails": "rails",
+    "ror": "rails",
+    "ruby on rails": "rails",
+    # .NET
+    ".net": ".net",
+    "dotnet": ".net",
+    "asp.net": ".net",
+    "dot net": ".net",
+    # C#
+    "c#": "c#",
+    "csharp": "c#",
+    "c sharp": "c#",
+    # Elasticsearch
+    "elasticsearch": "elasticsearch",
+    "elastic search": "elasticsearch",
+    "opensearch": "elasticsearch",
+    # DynamoDB
+    "dynamodb": "dynamodb",
+    "dynamo": "dynamodb",
+    "dynamo db": "dynamodb",
+    # GraphQL
+    "graphql": "graphql",
+    "gql": "graphql",
+    # REST
+    "rest": "rest api",
+    "rest api": "rest api",
+    "restful": "rest api",
+    "restful api": "rest api",
+    "rest apis": "rest api",
+    # gRPC
+    "grpc": "grpc",
+    # Apache Spark
+    "spark": "apache spark",
+    "apache spark": "apache spark",
+    # TensorFlow
+    "tensorflow": "tensorflow",
+    "tf": "tensorflow",
+    # PyTorch
+    "pytorch": "pytorch",
+    "torch": "pytorch",
+    # scikit-learn
+    "scikit-learn": "scikit-learn",
+    "sklearn": "scikit-learn",
+    "scikit learn": "scikit-learn",
+    # Redis
+    "redis": "redis",
+    # Kafka
+    "kafka": "kafka",
+    "apache kafka": "kafka",
+    # Helm
+    "helm": "helm",
+    # Ansible
+    "ansible": "ansible",
+    # Git
+    "git": "git",
+    "github": "git",
+    "gitlab": "git",
+    "bitbucket": "git",
+    # Linux / Bash
+    "linux": "linux",
+    "unix": "linux",
+    "bash": "bash",
+    "shell scripting": "bash",
+    "shell": "bash",
+    # OAuth / Auth
+    "oauth": "oauth",
+    "oauth2": "oauth",
+    "oidc": "oauth",
+    # Microservices
+    "microservices": "microservices",
+    "micro services": "microservices",
+    "micro-services": "microservices",
+    # Distributed systems
+    "distributed systems": "distributed systems",
+    "distributed computing": "distributed systems",
+    # Agile / Scrum
+    "agile": "agile",
+    "scrum": "agile",
+    "kanban": "agile",
+    # React Native
+    "react native": "react native",
+    "rn": "react native",
+    # Hugging Face
+    "hugging face": "hugging face",
+    "huggingface": "hugging face",
+    # Data engineering
+    "apache airflow": "apache airflow",
+    "airflow": "apache airflow",
+    "dbt": "dbt",
+    "snowflake": "snowflake",
+    "bigquery": "bigquery",
+    "google bigquery": "bigquery",
+    "redshift": "redshift",
+    "amazon redshift": "redshift",
+}
 
 
-def _canonical(name: str) -> str:
-    """Lowercase and strip whitespace for comparison."""
-    return name.strip().lower()
+def normalize_skill(name: str) -> str:
+    """
+    Return the canonical form of a skill name.
+
+    Steps:
+    1. Lowercase and strip whitespace.
+    2. Look up in SKILL_SYNONYMS; return canonical if found.
+    3. Otherwise return the lowercased name as-is.
+    """
+    key = name.strip().lower()
+    return SKILL_SYNONYMS.get(key, key)
 
 
-def _synonym_group(name: str) -> frozenset[str] | None:
-    """Return the synonym group containing *name*, or None."""
-    key = _canonical(name)
-    for group in _SKILL_SYNONYMS:
-        if key in group:
-            return group
-    return None
+def _word_contained(shorter: str, longer: str) -> bool:
+    """
+    True when *shorter* appears as a complete token inside *longer*.
+    Uses a word-boundary regex so "java" does NOT match inside "javascript",
+    but "react" DOES match inside "react native".
+    """
+    pattern = r"(?<![a-z0-9])" + re.escape(shorter) + r"(?![a-z0-9])"
+    return bool(re.search(pattern, longer))
 
 
-def _skills_match(resume_skill: str, jd_skill: str) -> bool:
-    """True when two skill names are equivalent (exact or synonym)."""
-    r, j = _canonical(resume_skill), _canonical(jd_skill)
+def _skill_match_weight(resume_skill: str, jd_skill: str) -> float:
+    """
+    Return a match weight between a resume skill and a JD skill:
+
+    1.0  — exact match after normalisation (includes synonym resolution)
+    0.5  — one normalised name is a whole-word token within the other
+           (partial / specialisation match, e.g. "React Native" contains "React")
+    0.0  — no relationship
+
+    Examples:
+      "k8s" vs "Kubernetes"      → 1.0  (both normalise to "kubernetes")
+      "React Native" vs "React"  → 0.5  (whole token "react" in "react native")
+      "Java" vs "JavaScript"     → 0.0  ("java" is NOT a whole token in "javascript")
+    """
+    r = normalize_skill(resume_skill)
+    j = normalize_skill(jd_skill)
+
     if r == j:
-        return True
-    r_group = _synonym_group(r)
-    j_group = _synonym_group(j)
-    if r_group is not None and j_group is not None and r_group == j_group:
-        return True
-    return False
+        return 1.0
+
+    # Partial / containment match — require whole-word boundary and len ≥ 3
+    # to avoid spurious matches (e.g. "go" matching "django").
+    if len(r) >= 3 and len(j) >= 3 and (
+        _word_contained(r, j) or _word_contained(j, r)
+    ):
+        return 0.5
+
+    return 0.0
 
 
 def _compute_skill_score(
@@ -72,9 +270,16 @@ def _compute_skill_score(
     """
     Returns (skill_score, matched_skills, missing_required, missing_preferred).
 
-    Scoring:
-      required  contribution: matched_required / total_required * 70
-      preferred contribution: matched_preferred / total_preferred * 30
+    Scoring uses weighted match values:
+      exact match   → weight 1.0
+      partial match → weight 0.5
+      no match      → weight 0.0
+
+    required  contribution: sum(weights) / total_required * 70
+    preferred contribution: sum(weights) / total_preferred * 30
+
+    Skills with weight > 0 appear in *matched_skills*.
+    Skills with weight == 0 appear in the corresponding missing list.
     """
     resume_skill_names = [s.name for s in resume.skills]
 
@@ -85,28 +290,38 @@ def _compute_skill_score(
     missing_required: list[str] = []
     missing_preferred: list[str] = []
 
-    def _find_in_resume(jd_skill_name: str) -> bool:
-        return any(_skills_match(r, jd_skill_name) for r in resume_skill_names)
+    def _best_weight(jd_skill_name: str) -> float:
+        """Highest match weight across all resume skills for this JD skill."""
+        return max(
+            (_skill_match_weight(r, jd_skill_name) for r in resume_skill_names),
+            default=0.0,
+        )
 
+    required_weight_sum = 0.0
     for skill in required_skills:
-        if _find_in_resume(skill.name):
+        w = _best_weight(skill.name)
+        required_weight_sum += w
+        if w > 0:
             matched.append(skill.name)
         else:
             missing_required.append(skill.name)
 
+    preferred_weight_sum = 0.0
     for skill in preferred_skills:
-        if _find_in_resume(skill.name):
+        w = _best_weight(skill.name)
+        preferred_weight_sum += w
+        if w > 0:
             matched.append(skill.name)
         else:
             missing_preferred.append(skill.name)
 
     required_score = (
-        (len(required_skills) - len(missing_required)) / len(required_skills) * 70
+        required_weight_sum / len(required_skills) * 70
         if required_skills
         else 70.0  # no required skills → full required credit
     )
     preferred_score = (
-        (len(preferred_skills) - len(missing_preferred)) / len(preferred_skills) * 30
+        preferred_weight_sum / len(preferred_skills) * 30
         if preferred_skills
         else 30.0  # no preferred skills → full preferred credit
     )
@@ -127,40 +342,103 @@ def _parse_date(date_str: str | None) -> date | None:
         return None
 
 
-def _compute_years_experience(resume: ParsedResume) -> float:
-    """Sum the calendar duration of all non-overlapping experience entries."""
+def calculate_years_of_experience(experience: list[ResumeExperience]) -> float:
+    """
+    Total years of non-overlapping work experience.
+
+    Parses YYYY-MM start/end dates, substitutes today for is_current=True or
+    missing end_date, then merges overlapping intervals before summing durations.
+    Returns total years as a float (e.g. 2.5).
+    """
     today = date.today()
-    total_days = 0
-    for exp in resume.experience:
+    intervals: list[tuple[date, date]] = []
+
+    for exp in experience:
         start = _parse_date(exp.start_date)
         if start is None:
             continue
-        end = today if exp.is_current or exp.end_date is None else _parse_date(exp.end_date)
-        if end is None:
+        if exp.is_current or exp.end_date is None:
             end = today
-        delta = (end - start).days
-        if delta > 0:
-            total_days += delta
+        else:
+            end = _parse_date(exp.end_date)
+            if end is None:
+                end = today
+        if end > start:
+            intervals.append((start, end))
+
+    if not intervals:
+        return 0.0
+
+    # Sort by start date then merge overlapping intervals
+    intervals.sort(key=lambda x: x[0])
+    merged: list[tuple[date, date]] = [intervals[0]]
+    for start, end in intervals[1:]:
+        last_start, last_end = merged[-1]
+        if start <= last_end:          # overlapping or adjacent
+            merged[-1] = (last_start, max(last_end, end))
+        else:
+            merged.append((start, end))
+
+    total_days = sum((end - start).days for start, end in merged)
     return total_days / 365.25
+
+
+def _compute_years_experience(resume: ParsedResume) -> float:
+    """Backward-compatible wrapper around calculate_years_of_experience."""
+    return calculate_years_of_experience(resume.experience)
+
+
+def calculate_technology_relevance(
+    resume_experience: list[ResumeExperience],
+    jd_skills: list[JDSkillRequirement],
+) -> float:
+    """
+    Fraction of JD required skills that appear in any experience's technologies.
+
+    Returns 0.0 when there are no required skills (no relevance bonus applies).
+    Returns a value in [0.0, 1.0] otherwise.
+    """
+    required_skills = [s for s in jd_skills if s.is_required]
+    if not required_skills:
+        return 0.0
+
+    # Collect all normalised technology names across all experience entries
+    known_techs: set[str] = set()
+    for exp in resume_experience:
+        for tech in exp.technologies:
+            known_techs.add(normalize_skill(tech))
+
+    matched = sum(
+        1 for skill in required_skills
+        if normalize_skill(skill.name) in known_techs
+    )
+    return matched / len(required_skills)
 
 
 def _compute_experience_score_base(years: float, min_required: int | None) -> float:
     """
-    Base experience score (0-70) based on years vs JD minimum.
+    Years-based experience score (0-70) against the JD minimum.
 
-    ≥ min_required        → 70
-    within 1 year short   → 50
-    > 1 year short        → 30
-    no JD requirement     → 60 (neutral)
+    gap = min_required - years:
+      gap ≤ -2          (exceeds by 2+ years)  → 70
+      -2 < gap ≤  0     (meets requirement)     → 60
+       0 < gap ≤  1     (≤1 year short)         → 45
+       1 < gap ≤  2     (1-2 years short)       → 30
+       gap >  2         (>2 years short)         → 15
+      no JD requirement                          → 60 (neutral)
     """
     if min_required is None:
         return 60.0
     gap = min_required - years
-    if gap <= 0:
+    if gap <= -2.0:
         return 70.0
+    if gap <= 0.0:
+        return 60.0
     if gap <= 1.0:
-        return 50.0
-    return 30.0
+        return 45.0
+    if gap <= 2.0:
+        return 30.0
+    return 15.0
 
 
 def _compute_keyword_score(
@@ -249,13 +527,11 @@ class MatchAgent:
             _compute_skill_score(resume, jd)
         )
 
-        # --- Dimension 2: experience score (base in Python, bonus via Claude) ---
-        years = _compute_years_experience(resume)
-        base_exp_score = _compute_experience_score_base(years, jd.min_years_experience)
-
-        # Relevance bonus (0-30): Claude evaluates industry/technology alignment.
-        relevance_bonus = self._call_experience_relevance(resume, jd, years)
-        experience_score = min(100.0, base_exp_score + relevance_bonus)
+        # --- Dimension 2: experience score (pure Python) ---
+        years = calculate_years_of_experience(resume.experience)
+        years_score = _compute_experience_score_base(years, jd.min_years_experience)
+        relevance = calculate_technology_relevance(resume.experience, jd.skills)
+        experience_score = min(100.0, years_score + relevance * 30.0)
 
         # --- Dimension 3: keyword score (pure Python) ---
         keyword_score, matched_kw = _compute_keyword_score(resume, jd)
@@ -296,46 +572,6 @@ class MatchAgent:
     # ------------------------------------------------------------------
     # Claude helpers
     # ------------------------------------------------------------------
-
-    def _call_experience_relevance(
-        self,
-        resume: ParsedResume,
-        jd: ParsedJobDescription,
-        actual_years: float,
-    ) -> float:
-        """
-        Ask Claude to rate how relevant the candidate's experience is to this
-        specific JD (industry, technology stack, domain). Returns 0-30.
-        """
-        prompt = (
-            f"A candidate has {actual_years:.1f} years of experience.\n\n"
-            f"Their experience roles:\n"
-            + "\n".join(
-                f"- {e.title} at {e.company} ({', '.join(e.technologies[:5])})"
-                for e in resume.experience
-            )
-            + f"\n\nJob description industry: {jd.industry or 'not specified'}\n"
-            f"JD required skills: {', '.join(s.name for s in jd.skills if s.is_required)}\n\n"
-            "Rate the RELEVANCE of the candidate's experience to this specific role on a scale "
-            "of 0-30 (0 = completely unrelated field, 30 = perfect domain and tech-stack match). "
-            "Return ONLY a single integer between 0 and 30, nothing else."
-        )
-
-        try:
-            t0 = time.perf_counter()
-            response = self._client.messages.create(
-                model=_MODEL,
-                max_tokens=16,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            logger.debug("Relevance call: %.0f ms", elapsed_ms)
-            raw = response.content[0].text.strip()
-            bonus = float(raw)
-            return max(0.0, min(30.0, bonus))
-        except Exception as exc:
-            logger.warning("Experience relevance call failed (%s); defaulting to 15", exc)
-            return 15.0
 
     def _call_gap_analysis(
         self,

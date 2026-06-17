@@ -8,6 +8,7 @@ the full match() flow is tested with a mocked Anthropic client.
 
 import json
 import os
+from datetime import date
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -19,6 +20,8 @@ from app.agents.match_agent import (
     _compute_keyword_score,
     _compute_skill_score,
     _compute_years_experience,
+    calculate_technology_relevance,
+    calculate_years_of_experience,
 )
 from app.models.job_description import JDSkillRequirement, ParsedJobDescription
 from app.models.match_result import MatchResult
@@ -83,18 +86,18 @@ _MOCK_GAP = json.dumps({
     "overall_assessment": "Good fit.",
 })
 
-# Relevance score that CAN be parsed as float (unlike _MOCK_GAP)
-_MOCK_RELEVANCE = "20"
 
+def _mock_create_side_effects(gap: str = _MOCK_GAP):
+    """Return a side_effect list: [gap_response].
 
-def _mock_create_side_effects(relevance: str = _MOCK_RELEVANCE, gap: str = _MOCK_GAP):
-    """Return a side_effect list: [relevance_response, gap_response]."""
+    Experience relevance is now pure Python; Claude is called only for gap analysis.
+    """
     def _resp(text):
         r = MagicMock()
         r.content = [SimpleNamespace(text=text)]
         r.usage = SimpleNamespace(input_tokens=10, output_tokens=10)
         return r
-    return [_resp(relevance), _resp(gap)]
+    return [_resp(gap)]
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +157,26 @@ class TestSkillScore:
         assert score == pytest.approx(85.0)
         assert "Go" in missing_pref
 
+    def test_skill_synonym_match(self):
+        """Resume has 'JS', JD requires 'JavaScript' — synonym resolves to full match."""
+        resume = _make_resume(["JS"])
+        jd = _make_jd(required=["JavaScript"])
+        _, matched, missing_req, _ = _compute_skill_score(resume, jd)
+
+        assert missing_req == []
+        assert "JavaScript" in matched
+
+    def test_skill_partial_match(self):
+        """'React Native' on resume gives partial credit for JD skill 'React'."""
+        resume = _make_resume(["React Native"])
+        jd = _make_jd(required=["React"])
+        score, matched, missing_req, _ = _compute_skill_score(resume, jd)
+
+        # weight 0.5 → required_score = 0.5/1 * 70 = 35; no preferred → full 30
+        assert score == pytest.approx(65.0)
+        assert "React" in matched   # weight > 0, counted as matched
+        assert missing_req == []    # not completely missing
+
 
 # ---------------------------------------------------------------------------
 # Keyword score — pure Python
@@ -196,8 +219,8 @@ class TestExperienceScore:
         assert _compute_experience_score_base(5.0, 3) == pytest.approx(70.0)
 
     def test_experience_score_within_one_year_short(self):
-        """2.5 years, JD wants 3 → gap 0.5 → base score 50."""
-        assert _compute_experience_score_base(2.5, 3) == pytest.approx(50.0)
+        """2.5 years, JD wants 3 → gap 0.5 → within 1yr short → base score 45."""
+        assert _compute_experience_score_base(2.5, 3) == pytest.approx(45.0)
 
     def test_experience_score_under_requirement(self):
         """1 year, JD wants 3 → gap 2 → base score 30."""
@@ -223,6 +246,43 @@ class TestExperienceScore:
         ]
         years = _compute_years_experience(_make_resume([], experience=experience))
         assert years > 5.0
+
+    def test_years_calculation(self):
+        """2020-01 to 2023-06 is approximately 3.4 years."""
+        experience = [ResumeExperience(
+            company="A", title="SWE",
+            start_date="2020-01", end_date="2023-06",
+            is_current=False, bullets=[], technologies=[],
+        )]
+        years = calculate_years_of_experience(experience)
+        assert 3.3 <= years <= 3.6
+
+    def test_years_calculation_current(self):
+        """A current role from 2022-01 should calculate up to today."""
+        experience = [ResumeExperience(
+            company="B", title="SWE",
+            start_date="2022-01", end_date=None,
+            is_current=True, bullets=[], technologies=[],
+        )]
+        years = calculate_years_of_experience(experience)
+        expected = (date.today() - date(2022, 1, 1)).days / 365.25
+        assert abs(years - expected) < 0.05
+
+    def test_technology_relevance(self):
+        """2 of 3 required JD skills present in experience technologies → ~0.67."""
+        experience = [ResumeExperience(
+            company="A", title="SWE",
+            start_date="2020-01", end_date="2023-01",
+            is_current=False, bullets=[],
+            technologies=["Java", "Spring Boot"],
+        )]
+        jd_skills = [
+            JDSkillRequirement(name="Java", is_required=True, category="language"),
+            JDSkillRequirement(name="Python", is_required=True, category="language"),
+            JDSkillRequirement(name="Spring Boot", is_required=True, category="framework"),
+        ]
+        relevance = calculate_technology_relevance(experience, jd_skills)
+        assert abs(relevance - 2 / 3) < 0.01
 
 
 # ---------------------------------------------------------------------------
@@ -320,10 +380,8 @@ class TestMatchAgent:
         assert 55 <= result.keyword_score <= 65
 
     def test_experience_score_meets_requirement(self, mock_cls):
-        """5+ years experience, JD wants 3 → experience_score ≥ 70 (base 70 + bonus)."""
-        mock_cls.return_value.messages.create.side_effect = (
-            _mock_create_side_effects(relevance="20")
-        )
+        """8+ years experience, JD wants 3 → exceeds by 2+ → years_score 70 → experience_score ≥ 70."""
+        mock_cls.return_value.messages.create.side_effect = _mock_create_side_effects()
         agent = MatchAgent()
         resume = _make_resume(
             [],
@@ -340,10 +398,8 @@ class TestMatchAgent:
         assert result.experience_score >= 70
 
     def test_experience_score_under_requirement(self, mock_cls):
-        """~1 year experience, JD wants 3 → base 30, experience_score < 70."""
-        mock_cls.return_value.messages.create.side_effect = (
-            _mock_create_side_effects(relevance="0")
-        )
+        """~2.4 years experience, JD wants 3 → within 1yr short → years_score 45, experience_score < 70."""
+        mock_cls.return_value.messages.create.side_effect = _mock_create_side_effects()
         agent = MatchAgent()
         resume = _make_resume(
             [],
@@ -407,14 +463,7 @@ class TestMatchAgent:
             r.usage = SimpleNamespace(input_tokens=10, output_tokens=5)
             return r
 
-        def _relevance_resp():
-            r = MagicMock()
-            r.content = [SimpleNamespace(text="15")]
-            r.usage = SimpleNamespace(input_tokens=10, output_tokens=3)
-            return r
-
         mock_cls.return_value.messages.create.side_effect = [
-            _relevance_resp(),
             _bad_resp(),  # gap attempt 1
             _bad_resp(),  # gap attempt 2 (strict retry)
         ]
