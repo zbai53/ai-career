@@ -5,6 +5,20 @@
 
 ---
 
+## Day 16 — 2025-06-17 (Phase 3: LangGraph Orchestration)
+
+**Completed:**
+- Studied LangGraph core concepts: StateGraph, nodes, edges, conditional branching, loops
+- Created 3 runnable examples (linear flow, conditional routing, multi-turn loop)
+- Defined JobHelperState (TypedDict) with all workflow fields
+- Built workflow graph with placeholder nodes: parse_resume → parse_jd → match → (rewrite OR interview) → review
+- Conditional routing: score < 70 → rewrite loop, score >= 70 → interview
+- Exported Mermaid diagram of the workflow
+
+**Blockers:** None
+
+**Next:** Day 17 — Wire real agents into LangGraph nodes, replace placeholders
+
 ## Day 15 — 2025-06-17 (Phase 2: Match Agent + Database)
 
 **Completed:**
