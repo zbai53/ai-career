@@ -5,6 +5,28 @@
 
 ---
 
+## Day 15 — 2025-06-17 (Phase 2: Match Agent + Database)
+
+**Completed:**
+- Documented match scoring algorithm and evaluation results in docs/evaluation/match-eval-v1.md
+- Updated API endpoints documentation with Phase 2 additions
+- Created InterviewSession entity and mapper (prep for Phase 5)
+- Marked Phase 2 complete in roadmap
+- All Python tests passing, Spring Boot starts cleanly, full chain verified
+
+**Blockers:** None
+
+**Phase 2 Summary:**
+- Match Agent with 3-dimension scoring (skill 45%, experience 30%, keyword 25%)
+- Skill synonym dictionary (20+ mappings) + fuzzy partial matching
+- Experience calculation from dates with technology relevance scoring
+- Gap analysis via Claude with actionable improvement suggestions
+- agent_runs observability table tracking every LLM call
+- 6 database tables with MyBatis CRUD mappers
+- 75+ unit tests passing
+
+**Next:** Day 16 — Phase 3: LangGraph orchestration (study docs, define state graph)
+
 ## Day 14 — 2025-06-17 (Phase 2: Match Agent + Database)
 
 **Completed:**
