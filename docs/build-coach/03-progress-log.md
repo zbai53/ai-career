@@ -5,6 +5,20 @@
 
 ---
 
+## Day 13 — 2025-06-17 (Phase 2: Match Agent + Database)
+
+**Completed:**
+- Added skill synonym dictionary (20+ mappings: js→javascript, k8s→kubernetes, etc.)
+- Implemented fuzzy partial matching (e.g. "React Native" partially matches "React" at 0.5 weight)
+- Improved experience scoring: calculates total years from dates, handles overlapping periods, technology relevance scoring
+- Removed Claude API call from experience scoring (pure Python now), Claude only used for gap analysis
+- Created match tuning script with 3 JDs (great/partial/poor match) for visual score verification
+- All unit tests passing
+
+**Blockers:** None
+
+**Next:** Day 14 — Spring Boot match endpoint improvements, agent_runs logging
+
 ## Day 12 — 2025-06-16 (Phase 2: Match Agent + Database)
 
 **Completed:**
