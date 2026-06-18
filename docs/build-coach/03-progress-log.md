@@ -5,6 +5,21 @@
 
 ---
 
+## Day 17 — 2025-06-18 (Phase 3: LangGraph Orchestration)
+
+**Completed:**
+- Replaced placeholder nodes with real Agent calls (ResumeAgent, JDAgent, MatchAgent)
+- Each node unpacks (result, agent_run) tuple, stores in state, accumulates agent_runs
+- Added MemorySaver checkpoint — workflow can be resumed from any step if interrupted
+- Created run_workflow() and get_workflow_state() helper functions
+- Added FastAPI endpoints: POST /api/workflow/run, GET /api/workflow/status/{thread_id}
+- Added JobHelperState fields: resume_file_path, jd_text
+- Wrote 5 workflow tests (node state updates, conditional routing)
+
+**Blockers:** None
+
+**Next:** Day 18 — Define conditional edges, error handling, full graph integration test
+
 ## Day 16 — 2025-06-17 (Phase 3: LangGraph Orchestration)
 
 **Completed:**
