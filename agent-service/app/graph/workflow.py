@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import logging
 import sys
+import time
 from typing import Optional
 
 from langgraph.checkpoint.memory import MemorySaver
@@ -62,6 +63,139 @@ def _failed_agent_run(agent_name: str, error_message: str) -> dict:
 
 
 # =============================================================================
+# Retry wrapper
+# =============================================================================
+
+def retry_node(node_fn, max_retries: int = 2, delay_seconds: float = 1.0):
+    """
+    Wrap a node function with automatic retry logic.
+
+    If the node writes state["error"], the wrapper retries the node up to
+    max_retries times (with delay_seconds sleep between attempts).  The
+    original state (not the error state) is used for each retry so transient
+    failures don't leave stale partial updates.
+
+    On success after retries, the wrapper:
+      - Tags the last agent_run entry with {"retry_count": N}.
+      - Merges retry_counts[node_name] = N back into state.
+
+    After exhausting all retries, the error is kept in the returned dict so
+    _check_error() can route the workflow to error_handler.
+
+    Args:
+        node_fn:       The original node function (state -> dict).
+        max_retries:   Maximum number of re-attempts after the first failure.
+        delay_seconds: Seconds to sleep between attempts.
+
+    Returns:
+        A wrapped node function with the same __name__ as node_fn.
+    """
+    def _wrapped(state: JobHelperState) -> dict:
+        node_name = node_fn.__name__
+        result = node_fn(state)
+
+        if not result.get("error"):
+            return result
+
+        # --- one or more retries ---
+        retry_counts = dict(state.get("retry_counts") or {})
+        # Accumulate failed agent_run entries across attempts
+        accumulated_runs = list(result.get("agent_runs", state.get("agent_runs", [])))
+
+        for attempt in range(1, max_retries + 1):
+            logger.warning(
+                "[workflow] %s failed (attempt %d/%d), retrying in %.1fs — %s",
+                node_name, attempt, max_retries, delay_seconds, result.get("error"),
+            )
+            time.sleep(delay_seconds)
+
+            retry_counts[node_name] = attempt
+            # Retry with original state inputs + updated retry_counts + accumulated runs
+            retry_state = {
+                **state,
+                "agent_runs":   accumulated_runs,
+                "retry_counts": retry_counts,
+                "error":        None,
+            }
+            result = node_fn(retry_state)
+
+            accumulated_runs = list(result.get("agent_runs", accumulated_runs))
+
+            if not result.get("error"):
+                # Tag the last successful run with retry metadata
+                if accumulated_runs:
+                    last_run = dict(accumulated_runs[-1])
+                    last_run["retry_count"] = attempt
+                    accumulated_runs = accumulated_runs[:-1] + [last_run]
+                logger.info("[workflow] %s succeeded on retry %d", node_name, attempt)
+                return {
+                    **result,
+                    "agent_runs":     accumulated_runs,
+                    "retry_counts":   retry_counts,
+                    "workflow_status": "running",
+                }
+
+        # All retries exhausted — propagate the error for routing
+        logger.error("[workflow] %s failed after %d retries", node_name, max_retries)
+        return {**result, "agent_runs": accumulated_runs, "retry_counts": retry_counts}
+
+    _wrapped.__name__ = node_fn.__name__
+    return _wrapped
+
+
+# =============================================================================
+# Degraded-mode helper (match_node fallback)
+# =============================================================================
+
+def _compute_degraded_match_result(resume: dict, jd: dict) -> dict:
+    """
+    Compute basic skill/keyword match scores using pure Python (no Claude call).
+
+    Called when MatchAgent.match() fails completely, so the workflow can still
+    produce a usable score and continue routing.  Gap analysis fields are
+    replaced with a placeholder indicating the degraded state.
+    """
+    resume_skill_names = {
+        s.get("name", "").lower()
+        for s in (resume.get("skills") or [])
+    }
+    jd_skills = [(s.get("name", ""), s.get("is_required", False))
+                 for s in (jd.get("skills") or [])]
+
+    if jd_skills:
+        matched_total    = sum(1 for name, _ in jd_skills if name.lower() in resume_skill_names)
+        skill_score      = matched_total / len(jd_skills) * 100.0
+    else:
+        skill_score = 50.0
+
+    jd_keywords   = {k.lower() for k in (jd.get("keywords") or [])}
+    resume_text   = (resume.get("summary") or "").lower()
+    if jd_keywords:
+        matched_kw    = sum(1 for k in jd_keywords if k in resume_text or k in resume_skill_names)
+        keyword_score = matched_kw / len(jd_keywords) * 100.0
+    else:
+        keyword_score = 50.0
+
+    experience_score = 50.0  # neutral — can't compute without Claude
+    overall_score    = round(skill_score * 0.5 + keyword_score * 0.3 + experience_score * 0.2, 1)
+
+    return {
+        "overall_score":    overall_score,
+        "skill_score":      round(skill_score,    1),
+        "experience_score": experience_score,
+        "keyword_score":    round(keyword_score,  1),
+        "gap_analysis": {
+            "error":                   "Gap analysis unavailable",
+            "missing_required_skills": [],
+            "improvement_suggestions": [
+                "Gap analysis temporarily unavailable — resume retry or manual review recommended.",
+            ],
+        },
+        "status": "degraded",
+    }
+
+
+# =============================================================================
 # Error handler node
 # =============================================================================
 
@@ -75,7 +209,7 @@ def error_handler_node(state: JobHelperState) -> dict:
     """
     error_msg = state.get("error") or "unknown error"
     logger.error("[workflow] error_handler_node: %s", error_msg)
-    return {"current_step": "error"}
+    return {"current_step": "error", "workflow_status": "failed"}
 
 
 # =============================================================================
@@ -171,19 +305,37 @@ def match_node(state: JobHelperState) -> dict:
         agent = MatchAgent()
         match_result, agent_run = agent.match(resume, jd)
         return {
-            "current_step": "matching",
-            "match_result": match_result.model_dump(),
-            "agent_runs":   state.get("agent_runs", []) + [agent_run],
-            "error":        None,
+            "current_step":   "matching",
+            "match_result":   match_result.model_dump(),
+            "agent_runs":     state.get("agent_runs", []) + [agent_run],
+            "error":          None,
+            "workflow_status": "running",
         }
     except Exception as exc:
-        msg = f"match_node failed: {exc}"
-        logger.error("[workflow] %s", msg, exc_info=True)
-        return {
-            "current_step": "error",
-            "error":        msg,
-            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("match_agent", msg)],
-        }
+        # --- degraded mode: fall back to pure-Python scoring ---
+        logger.warning(
+            "[workflow] match_node full match failed, trying degraded mode: %s", exc,
+        )
+        try:
+            degraded_result = _compute_degraded_match_result(state["resume"], state["jd"])
+            degraded_run    = _failed_agent_run("match_agent", f"degraded mode — gap analysis failed: {exc}")
+            logger.info("[workflow] match_node degraded mode succeeded (overall_score=%.1f)",
+                        degraded_result.get("overall_score", 0))
+            return {
+                "current_step":   "matching",
+                "match_result":   degraded_result,
+                "agent_runs":     state.get("agent_runs", []) + [degraded_run],
+                "error":          None,
+                "workflow_status": "degraded",
+            }
+        except Exception as deg_exc:
+            msg = f"match_node failed (including degraded fallback): {exc} / {deg_exc}"
+            logger.error("[workflow] %s", msg, exc_info=True)
+            return {
+                "current_step": "error",
+                "error":        msg,
+                "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("match_agent", msg)],
+            }
 
 
 # =============================================================================
@@ -204,7 +356,12 @@ def interview_node(state: JobHelperState) -> dict:
 
 def review_node(state: JobHelperState) -> dict:
     """Placeholder — CoachAgent wired in Phase 5."""
-    return {"current_step": "reviewing"}
+    # Preserve "degraded" if match ran in degraded mode; otherwise mark completed.
+    status = state.get("workflow_status", "running")
+    return {
+        "current_step":   "reviewing",
+        "workflow_status": "completed" if status != "degraded" else "degraded",
+    }
 
 
 # =============================================================================
@@ -255,14 +412,14 @@ def after_match_router(state: JobHelperState) -> str:
 
 def _build_parse_resume_graph() -> StateGraph:
     b = StateGraph(JobHelperState)
-    b.add_node("parse_resume", parse_resume_node)
+    b.add_node("parse_resume", retry_node(parse_resume_node))
     b.add_edge(START, "parse_resume")
     b.add_edge("parse_resume", END)
     return b
 
 def _build_parse_jd_graph() -> StateGraph:
     b = StateGraph(JobHelperState)
-    b.add_node("parse_jd", parse_jd_node)
+    b.add_node("parse_jd", retry_node(parse_jd_node))
     b.add_edge(START, "parse_jd")
     b.add_edge("parse_jd", END)
     return b
@@ -287,6 +444,8 @@ def _empty_state(user_id: str) -> JobHelperState:
         "interview_review":   None,
         "current_step":       "idle",
         "error":              None,
+        "retry_counts":       {},
+        "workflow_status":    "running",
         "agent_runs":         [],
     }
 
@@ -386,9 +545,9 @@ def _build_graph() -> StateGraph:
     builder = StateGraph(JobHelperState)
 
     # --- nodes ---
-    builder.add_node("parse_resume",  parse_resume_node)
-    builder.add_node("parse_jd",      parse_jd_node)
-    builder.add_node("match",         match_node)
+    builder.add_node("parse_resume",  retry_node(parse_resume_node))
+    builder.add_node("parse_jd",      retry_node(parse_jd_node))
+    builder.add_node("match",         retry_node(match_node))
     builder.add_node("rewrite",       rewrite_node)
     builder.add_node("interview",     interview_node)
     builder.add_node("review",        review_node)
@@ -485,6 +644,8 @@ def run_workflow(
         "interview_review":   None,
         "current_step":       "idle",
         "error":              None,
+        "retry_counts":       {},
+        "workflow_status":    "running",
         "agent_runs":         [],
     }
 
@@ -578,6 +739,8 @@ if __name__ == "__main__":
         "interview_review":   None,
         "current_step":       "parsing_jd",
         "error":              None,
+        "retry_counts":       {},
+        "workflow_status":    "running",
         "agent_runs":         [],
     }
 

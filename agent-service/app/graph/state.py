@@ -78,6 +78,21 @@ Lifecycle of each field:
       Every agent node appends its agent_run dict (produced by log_agent_run)
       here. The Spring Boot backend persists these to the agent_runs table
       after the graph finishes. Starts as an empty list.
+
+  retry_counts
+      Maps node_name → number of retries attempted for that node in the
+      current run.  E.g. {"parse_resume_node": 1, "match_node": 2}.
+      Updated by the retry_node wrapper; absent keys mean zero retries.
+      Starts as an empty dict.
+
+  workflow_status
+      High-level status of the overall workflow.  Updated by error_handler
+      and by nodes that enter a degraded operating mode.
+      Valid values:
+          "running"   — workflow is in progress (initial value)
+          "completed" — workflow finished successfully
+          "degraded"  — completed but with reduced quality (e.g. no gap analysis)
+          "failed"    — workflow ended in error_handler_node
 """
 
 from __future__ import annotations
@@ -139,6 +154,15 @@ class JobHelperState(TypedDict):
 
     error: Optional[str]
     """Last error message. None when the most recent node succeeded."""
+
+    # -------------------------------------------------------------------------
+    # Retry tracking
+    # -------------------------------------------------------------------------
+    retry_counts: dict
+    """Maps node_name → retry count for the current run. Updated by retry_node."""
+
+    workflow_status: str
+    """High-level workflow status: 'running', 'completed', 'degraded', or 'failed'."""
 
     # -------------------------------------------------------------------------
     # Observability

@@ -51,6 +51,8 @@ def _base_state(**overrides) -> JobHelperState:
         "interview_review":   None,
         "current_step":       "idle",
         "error":              None,
+        "retry_counts":       {},
+        "workflow_status":    "running",
         "agent_runs":         [],
     }
     state.update(overrides)
@@ -287,8 +289,31 @@ class TestMatchNode:
         assert result["current_step"] == "error"
         assert "jd" in result["error"].lower()
 
-    def test_returns_error_on_agent_exception(self) -> None:
+    def test_returns_degraded_on_agent_exception(self) -> None:
+        """When MatchAgent.match() raises, match_node falls back to degraded mode
+        (pure-Python scoring) rather than propagating an error."""
         with patch("app.graph.workflow.MatchAgent") as MockAgent:
+            MockAgent.return_value.match.side_effect = RuntimeError("LLM timeout")
+
+            state = _base_state(
+                resume=self._minimal_resume_dict(),
+                jd=self._minimal_jd_dict(),
+            )
+            result = match_node(state)
+
+        # Degraded mode succeeds — no error, but status is "degraded"
+        assert result["current_step"] == "matching"
+        assert result.get("error") is None
+        assert result["workflow_status"] == "degraded"
+        assert result["match_result"]["status"] == "degraded"
+        assert "Gap analysis unavailable" in result["match_result"]["gap_analysis"]["error"]
+
+    def test_returns_error_when_degraded_also_fails(self) -> None:
+        """Only when both the full match AND the degraded fallback fail should
+        match_node return current_step='error'."""
+        with patch("app.graph.workflow.MatchAgent") as MockAgent, \
+             patch("app.graph.workflow._compute_degraded_match_result",
+                   side_effect=RuntimeError("degraded also broken")):
             MockAgent.return_value.match.side_effect = RuntimeError("LLM timeout")
 
             state = _base_state(
@@ -735,3 +760,261 @@ class TestRunHelpers:
         # Match called exactly once — no rewrite loop
         assert MM.return_value.match.call_count == 1
         assert state["match_result"]["overall_score"] == 85.0
+
+
+# ---------------------------------------------------------------------------
+# Retry logic — retry_node wrapper behaviour
+# ---------------------------------------------------------------------------
+
+class TestRetryLogic:
+    """
+    Tests for the retry_node wrapper applied to the three real-agent nodes.
+
+    All tests go through the full compiled graph via run_workflow() so the
+    retry wrapper (applied at graph-registration time) is exercised end-to-end.
+    time.sleep is patched to keep the suite fast.
+    """
+
+    def test_retry_resume_parse_succeeds_on_second_try(self) -> None:
+        """
+        ResumeAgent.parse fails on the first call then succeeds on the second.
+        The retry wrapper must:
+          - not propagate the transient error
+          - populate state["resume"] from the successful attempt
+          - log both the failed run (status="error") and the successful run
+            (status="success", retry_count=1)
+        """
+        resume_run = _fake_agent_run("resume_agent")
+        jd_run     = _fake_agent_run("jd_agent")
+        match_run  = _fake_agent_run("match_agent")
+
+        with patch("app.graph.workflow.ResumeAgent") as MockResume, \
+             patch("app.graph.workflow.JDAgent")    as MockJD,     \
+             patch("app.graph.workflow.MatchAgent") as MockMatch,  \
+             patch("time.sleep"):                                  # avoid real delays
+
+            # First call raises; second call returns the real result
+            MockResume.return_value.parse.side_effect = [
+                RuntimeError("network blip"),
+                (_fake_resume_model(), resume_run),
+            ]
+            MockJD.return_value.parse.return_value    = (_fake_jd_model(),     jd_run)
+            MockMatch.return_value.match.return_value = (_fake_match_model(80.0), match_run)
+
+            final = run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/resume.pdf",
+                jd_text="We are hiring a backend engineer.",
+                thread_id=_unique_thread(),
+            )
+
+        # Retry worked — resume is populated, no error survives
+        assert final["resume"] is not None, "retry must recover and populate resume"
+        assert final["error"]  is None,     "error must be cleared after successful retry"
+
+        # parse was attempted exactly twice (1 initial + 1 retry)
+        assert MockResume.return_value.parse.call_count == 2
+
+        # agent_runs must contain both the failed attempt and the successful one
+        resume_runs = [r for r in final["agent_runs"] if r["agent_name"] == "resume_agent"]
+        assert len(resume_runs) == 2, f"expected 2 resume runs, got {len(resume_runs)}"
+
+        statuses = {r["status"] for r in resume_runs}
+        assert "error"   in statuses, "failed attempt must be logged with status='error'"
+        assert "success" in statuses, "successful retry must be logged with status='success'"
+
+        # The successful retry entry is tagged with retry_count=1
+        success_run = next(r for r in resume_runs if r["status"] == "success")
+        assert success_run.get("retry_count") == 1
+
+    def test_retry_exhausted_goes_to_error(self) -> None:
+        """
+        ResumeAgent.parse fails on every attempt (initial + 2 retries = 3 total).
+        After exhausting max_retries=2, the workflow must:
+          - set state["error"] with the failure message
+          - set current_step to "error"
+          - set workflow_status to "failed"
+          - never invoke JDAgent or MatchAgent
+        """
+        with patch("app.graph.workflow.ResumeAgent") as MockResume, \
+             patch("app.graph.workflow.JDAgent")    as MockJD,     \
+             patch("app.graph.workflow.MatchAgent") as MockMatch,  \
+             patch("time.sleep"):
+
+            MockResume.return_value.parse.side_effect = RuntimeError("repeated failure")
+
+            final = run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/resume.pdf",
+                jd_text="some JD",
+                thread_id=_unique_thread(),
+            )
+
+        assert final["error"]          is not None
+        assert "repeated failure"      in final["error"]
+        assert final["current_step"]   == "error"
+        assert final["workflow_status"] == "failed"
+
+        # 1 initial call + 2 retries = 3 total
+        assert MockResume.return_value.parse.call_count == 3
+
+        # Downstream agents must never be reached
+        MockJD.return_value.parse.assert_not_called()
+        MockMatch.return_value.match.assert_not_called()
+
+    def test_match_degraded_mode(self) -> None:
+        """
+        MatchAgent.match raises on every call (simulating Claude gap-analysis
+        failure).  The degraded fallback inside match_node must:
+          - still return a match_result with numeric scores
+          - include a gap_analysis dict with an "error" key
+          - set workflow_status to "degraded" (not "failed")
+          - allow the workflow to reach a terminal node without error
+
+        _compute_degraded_match_result is patched to return overall_score=75
+        so the router sends to 'interview' rather than looping through 'rewrite'.
+        """
+        resume_run = _fake_agent_run("resume_agent")
+        jd_run     = _fake_agent_run("jd_agent")
+
+        _degraded_result = {
+            "overall_score":    75.0,
+            "skill_score":      70.0,
+            "experience_score": 50.0,
+            "keyword_score":    85.0,
+            "gap_analysis": {
+                "error":                   "Gap analysis unavailable",
+                "missing_required_skills": [],
+                "improvement_suggestions": [
+                    "Gap analysis temporarily unavailable — resume retry or manual review recommended.",
+                ],
+            },
+            "status": "degraded",
+        }
+
+        with patch("app.graph.workflow.ResumeAgent") as MockResume,                      \
+             patch("app.graph.workflow.JDAgent")    as MockJD,                            \
+             patch("app.graph.workflow.MatchAgent") as MockMatch,                         \
+             patch("app.graph.workflow._compute_degraded_match_result",
+                   return_value=_degraded_result),                                        \
+             patch("time.sleep"):
+
+            MockResume.return_value.parse.return_value = (_fake_resume_model(), resume_run)
+            MockJD.return_value.parse.return_value     = (_fake_jd_model(),     jd_run)
+            MockMatch.return_value.match.side_effect   = RuntimeError("Claude API error")
+
+            final = run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/resume.pdf",
+                jd_text="some JD",
+                thread_id=_unique_thread(),
+            )
+
+        # Workflow completed without propagating an error
+        assert final["error"] is None
+
+        # match_result is populated with numeric scores
+        mr = final["match_result"]
+        assert mr is not None
+        assert "overall_score" in mr
+        assert isinstance(mr["overall_score"], (int, float))
+
+        # gap_analysis signals the degraded state
+        gap = mr["gap_analysis"]
+        assert "error" in gap
+        assert "unavailable" in gap["error"].lower()
+
+        # workflow_status reflects degradation, not failure
+        assert final["workflow_status"] == "degraded", (
+            f"expected 'degraded', got '{final['workflow_status']}'"
+        )
+
+
+# ---------------------------------------------------------------------------
+# GET /api/workflow/visualize
+# ---------------------------------------------------------------------------
+
+class TestVisualize:
+    def test_workflow_visualize_returns_mermaid(self) -> None:
+        """
+        GET /api/workflow/visualize must return a JSON object with a non-empty
+        "mermaid" string that looks like a Mermaid diagram.
+        """
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        client   = TestClient(app)
+        response = client.get("/api/workflow/visualize")
+
+        assert response.status_code == 200
+
+        body = response.json()
+        assert "mermaid" in body, "response must contain a 'mermaid' key"
+
+        diagram = body["mermaid"]
+        assert isinstance(diagram, str)
+        assert len(diagram) > 0, "diagram string must not be empty"
+
+        diagram_lower = diagram.lower()
+        assert any(kw in diagram_lower for kw in ("graph", "statediagram", "flowchart")), (
+            f"diagram does not look like Mermaid: first 100 chars = {diagram[:100]!r}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# POST /api/pipeline/run — response summary fields
+# ---------------------------------------------------------------------------
+
+class TestPipelineEndpoint:
+    def test_pipeline_response_includes_summary(self) -> None:
+        """
+        POST /api/pipeline/run must include workflow_status, steps_completed,
+        total_duration_ms, and total_tokens in its JSON response.
+        """
+        from fastapi.testclient import TestClient
+        from app.main import app
+
+        resume_run = _fake_agent_run("resume_agent")
+        jd_run     = _fake_agent_run("jd_agent")
+        match_run  = _fake_agent_run("match_agent")
+
+        client = TestClient(app)
+
+        with patch("app.graph.workflow.ResumeAgent") as MR, \
+             patch("app.graph.workflow.JDAgent")    as MJ, \
+             patch("app.graph.workflow.MatchAgent") as MM:
+
+            MR.return_value.parse.return_value = (_fake_resume_model(), resume_run)
+            MJ.return_value.parse.return_value = (_fake_jd_model(),     jd_run)
+            MM.return_value.match.return_value = (_fake_match_model(80.0), match_run)
+
+            response = client.post(
+                "/api/pipeline/run",
+                data={"jd_text": "We need a backend engineer.", "user_id": "test-user"},
+                files={"file": ("resume.pdf", b"%PDF-1.4 fake content", "application/pdf")},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+
+        # All four summary fields must be present
+        assert "workflow_status"   in body, "missing workflow_status"
+        assert "steps_completed"   in body, "missing steps_completed"
+        assert "total_duration_ms" in body, "missing total_duration_ms"
+        assert "total_tokens"      in body, "missing total_tokens"
+
+        # Types and value bounds
+        assert body["workflow_status"] in {"completed", "degraded", "running", "failed"}
+        assert isinstance(body["steps_completed"],   list)
+        assert isinstance(body["total_duration_ms"], int)
+        assert isinstance(body["total_tokens"],      int)
+        assert body["total_duration_ms"] >= 0
+        assert body["total_tokens"]      >= 0
+
+        # Three successful agents → three entries in steps_completed
+        # (resume_agent, jd_agent, match_agent all returned status="success")
+        assert len(body["steps_completed"]) == 3
+
+        # Aggregate values: each fake run has duration_ms=100, token_count=50
+        assert body["total_duration_ms"] == 300
+        assert body["total_tokens"]      == 150

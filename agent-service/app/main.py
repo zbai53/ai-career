@@ -8,7 +8,7 @@ load_dotenv()
 
 import anthropic
 from fastapi import FastAPI, Form, UploadFile, File
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.agents.match_agent import MatchAgent
@@ -20,6 +20,7 @@ from app.graph.workflow import (
     run_parse_jd,
     run_parse_resume,
     run_workflow,
+    workflow_graph,
 )
 from app.models.job_description import ParsedJobDescription
 from app.models.resume import ParsedResume
@@ -52,6 +53,89 @@ class WorkflowRunRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
+_AGENT_TO_STEP: dict[str, str] = {
+    "resume_agent":    "parse_resume",
+    "jd_agent":        "parse_jd",
+    "match_agent":     "match",
+    "rewrite_agent":   "rewrite",
+    "interview_agent": "interview",
+    "coach_agent":     "review",
+}
+
+_MERMAID_HTML_TEMPLATE = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Career Workflow Graph</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+  <style>
+    body {{
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f8f9fa;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+      margin: 0;
+    }}
+    h1 {{ color: #343a40; margin-bottom: 1.5rem; }}
+    .mermaid {{
+      background: #ffffff;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      padding: 2rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.08);
+      max-width: 900px;
+      width: 100%;
+    }}
+  </style>
+</head>
+<body>
+  <h1>AI Career Workflow Graph</h1>
+  <div class="mermaid">
+{diagram}
+  </div>
+  <script>
+    mermaid.initialize({{ startOnLoad: true, theme: "default" }});
+  </script>
+</body>
+</html>
+"""
+
+
+def _summarize_runs(agent_runs: list[dict]) -> dict:
+    """Compute aggregate stats from a list of agent_run dicts."""
+    total_duration_ms = sum(r.get("duration_ms", 0) for r in agent_runs)
+    total_tokens      = sum(r.get("token_count", 0) for r in agent_runs)
+    steps_completed   = [
+        _AGENT_TO_STEP.get(r["agent_name"], r["agent_name"])
+        for r in agent_runs
+        if r.get("status") == "success"
+    ]
+    return {
+        "total_duration_ms": total_duration_ms,
+        "total_tokens":      total_tokens,
+        "steps_completed":   steps_completed,
+    }
+
+
+def _derive_workflow_status(final_state: dict) -> str:
+    """Determine workflow_status from final graph state."""
+    stored = final_state.get("workflow_status")
+    if stored in ("completed", "degraded", "failed"):
+        return stored
+    # Fallback: infer from error / current_step
+    if final_state.get("error") or final_state.get("current_step") == "error":
+        return "failed"
+    return "completed"
+
+
+# ---------------------------------------------------------------------------
 # Health
 # ---------------------------------------------------------------------------
 
@@ -81,6 +165,25 @@ async def health_llm():
             status_code=503,
             content={"status": "llm-unavailable", "error": str(e)},
         )
+
+
+# ---------------------------------------------------------------------------
+# Workflow visualisation
+# ---------------------------------------------------------------------------
+
+@app.get("/api/workflow/visualize")
+async def workflow_visualize():
+    """Return the Mermaid diagram source of the compiled workflow graph."""
+    mermaid = workflow_graph.get_graph().draw_mermaid()
+    return {"mermaid": mermaid}
+
+
+@app.get("/api/workflow/visualize/html", response_class=HTMLResponse)
+async def workflow_visualize_html():
+    """Return an HTML page that renders the workflow graph via Mermaid JS."""
+    mermaid = workflow_graph.get_graph().draw_mermaid()
+    html = _MERMAID_HTML_TEMPLATE.format(diagram=mermaid)
+    return HTMLResponse(content=html)
 
 
 # ---------------------------------------------------------------------------
@@ -242,13 +345,18 @@ async def pipeline_run(
         )
 
         # Determine the routing decision from the final step label
-        step = final_state.get("current_step", "")
+        step       = final_state.get("current_step", "")
+        agent_runs = final_state.get("agent_runs", [])
+        stats      = _summarize_runs(agent_runs)
+
         if step == "error":
             return JSONResponse(
                 status_code=500,
                 content={
-                    "error":      final_state.get("error"),
-                    "agent_runs": final_state.get("agent_runs", []),
+                    "error":           final_state.get("error"),
+                    "workflow_status": "failed",
+                    "agent_runs":      agent_runs,
+                    **stats,
                 },
             )
 
@@ -258,13 +366,15 @@ async def pipeline_run(
             routing = "interview" if match_score >= 70 else "rewrite"
 
         return {
-            "current_step": step,
-            "resume":       final_state.get("resume"),
-            "jd":           final_state.get("jd"),
-            "match_result": final_state.get("match_result"),
-            "routing":      routing,
-            "agent_runs":   final_state.get("agent_runs", []),
-            "error":        final_state.get("error"),
+            "current_step":    step,
+            "resume":          final_state.get("resume"),
+            "jd":              final_state.get("jd"),
+            "match_result":    final_state.get("match_result"),
+            "routing":         routing,
+            "workflow_status": _derive_workflow_status(final_state),
+            "agent_runs":      agent_runs,
+            "error":           final_state.get("error"),
+            **stats,
         }
 
     except Exception as exc:
@@ -299,13 +409,25 @@ async def workflow_run(body: WorkflowRunRequest):
             content={"error": f"Workflow failed: {exc}"},
         )
 
+    agent_runs = final_state.get("agent_runs", [])
+    stats      = _summarize_runs(agent_runs)
+
     if final_state.get("error"):
         return JSONResponse(
             status_code=500,
-            content={"error": final_state["error"]},
+            content={
+                "error":           final_state["error"],
+                "workflow_status": "failed",
+                "agent_runs":      agent_runs,
+                **stats,
+            },
         )
 
-    return final_state
+    return {
+        **final_state,
+        "workflow_status": _derive_workflow_status(final_state),
+        **stats,
+    }
 
 
 @app.get("/api/workflow/status/{thread_id}")
