@@ -5,6 +5,20 @@
 
 ---
 
+## Day 18 — 2025-06-18 (Phase 3: LangGraph Orchestration)
+
+**Completed:**
+- Added error handling to all workflow nodes with try-except and failed agent_run logging
+- Created error_handler_node with conditional routing (any node error → error handler → END)
+- Created Spring Boot WorkflowController: POST /api/workflow/run, GET /api/workflow/status/{threadId}
+- AgentServiceClient.runWorkflow() with 120s timeout for multi-agent workflows
+- Integration tests: happy path (3 agents run), resume error, JD error, checkpoint inspection
+- Exported Mermaid workflow diagram to docs/architecture-workflow.md
+
+**Blockers:** None
+
+**Next:** Day 19 — Wire LangGraph into FastAPI endpoints, replace individual agent calls with workflow invocation
+
 ## Day 17 — 2025-06-18 (Phase 3: LangGraph Orchestration)
 
 **Completed:**
