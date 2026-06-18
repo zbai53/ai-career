@@ -25,6 +25,9 @@ from app.graph.workflow import (
     match_node,
     parse_jd_node,
     parse_resume_node,
+    run_full_pipeline,
+    run_parse_jd,
+    run_parse_resume,
     run_workflow,
 )
 
@@ -551,3 +554,184 @@ class TestWorkflowIntegration:
         assert snap["created_at"] is not None
         assert snap["metadata"] is not None
         assert snap["metadata"].get("step") is not None
+
+
+# ---------------------------------------------------------------------------
+# run_parse_resume / run_parse_jd / run_full_pipeline
+# ---------------------------------------------------------------------------
+
+class TestRunHelpers:
+    """Tests for the convenience wrapper functions added in Phase 3."""
+
+    # ── run_parse_resume ─────────────────────────────────────────────────────
+
+    def test_run_parse_resume_returns_dict(self) -> None:
+        """Happy path: returns (dict, [agent_run]) where dict has resume fields."""
+        fake_run = _fake_agent_run("resume_agent")
+
+        with patch("app.graph.workflow.ResumeAgent") as MockResume:
+            MockResume.return_value.parse.return_value = (_fake_resume_model(), fake_run)
+            resume_dict, agent_runs = run_parse_resume("/fake/resume.pdf", user_id="u1")
+
+        assert isinstance(resume_dict, dict)
+        assert resume_dict["contact"]["name"] == "Jane Doe"
+        assert isinstance(agent_runs, list)
+        assert len(agent_runs) == 1
+        assert agent_runs[0]["agent_name"] == "resume_agent"
+        assert agent_runs[0]["status"] == "success"
+
+    def test_run_parse_resume_returns_none_on_failure(self) -> None:
+        """On agent exception: dict is None, agent_runs has a failed entry."""
+        with patch("app.graph.workflow.ResumeAgent") as MockResume:
+            MockResume.return_value.parse.side_effect = RuntimeError("PDF corrupt")
+            resume_dict, agent_runs = run_parse_resume("/bad.pdf")
+
+        assert resume_dict is None
+        assert len(agent_runs) >= 1
+        assert agent_runs[0]["status"] == "error"
+
+    # ── run_parse_jd ─────────────────────────────────────────────────────────
+
+    def test_run_parse_jd_returns_dict(self) -> None:
+        """Happy path: returns (dict, [agent_run]) where dict has JD fields."""
+        fake_run = _fake_agent_run("jd_agent")
+
+        with patch("app.graph.workflow.JDAgent") as MockJD:
+            MockJD.return_value.parse.return_value = (_fake_jd_model(), fake_run)
+            jd_dict, agent_runs = run_parse_jd("We are hiring a backend engineer.", user_id="u1")
+
+        assert isinstance(jd_dict, dict)
+        assert jd_dict["title"] == "Backend Engineer"
+        assert isinstance(agent_runs, list)
+        assert len(agent_runs) == 1
+        assert agent_runs[0]["agent_name"] == "jd_agent"
+        assert agent_runs[0]["status"] == "success"
+
+    def test_run_parse_jd_returns_none_on_failure(self) -> None:
+        """On agent exception: dict is None, agent_runs has a failed entry."""
+        with patch("app.graph.workflow.JDAgent") as MockJD:
+            MockJD.return_value.parse.side_effect = ValueError("JD too short")
+            jd_dict, agent_runs = run_parse_jd("x")
+
+        assert jd_dict is None
+        assert len(agent_runs) >= 1
+        assert agent_runs[0]["status"] == "error"
+
+    # ── run_full_pipeline ─────────────────────────────────────────────────────
+
+    def test_run_full_pipeline_happy_path(self) -> None:
+        """All agents succeed: resume, jd, and match_result all populated."""
+        resume_run = _fake_agent_run("resume_agent")
+        jd_run     = _fake_agent_run("jd_agent")
+        match_run  = _fake_agent_run("match_agent")
+
+        with patch("app.graph.workflow.ResumeAgent") as MR, \
+             patch("app.graph.workflow.JDAgent")    as MJ, \
+             patch("app.graph.workflow.MatchAgent") as MM:
+
+            MR.return_value.parse.return_value = (_fake_resume_model(), resume_run)
+            MJ.return_value.parse.return_value = (_fake_jd_model(),    jd_run)
+            MM.return_value.match.return_value = (_fake_match_model(80.0), match_run)
+
+            state = run_full_pipeline(
+                resume_file_path="/fake/resume.pdf",
+                jd_text="We are hiring a backend engineer.",
+                thread_id=_unique_thread(),
+            )
+
+        assert state["resume"]       is not None
+        assert state["jd"]           is not None
+        assert state["match_result"] is not None
+        assert state["error"]        is None
+        assert len(state["agent_runs"]) == 3
+
+    def test_run_full_pipeline_with_error(self) -> None:
+        """ResumeAgent failure: state carries error, jd and match_result are None."""
+        with patch("app.graph.workflow.ResumeAgent") as MR, \
+             patch("app.graph.workflow.JDAgent")    as MJ, \
+             patch("app.graph.workflow.MatchAgent") as MM:
+
+            MR.return_value.parse.side_effect = RuntimeError("disk read error")
+
+            state = run_full_pipeline(
+                resume_file_path="/bad/resume.pdf",
+                jd_text="some JD",
+                thread_id=_unique_thread(),
+            )
+
+        assert state["error"]        is not None
+        assert "disk read error"     in state["error"]
+        assert state["resume"]       is None
+        assert state["jd"]           is None
+        assert state["match_result"] is None
+        MJ.return_value.parse.assert_not_called()
+        MM.return_value.match.assert_not_called()
+
+    def test_pipeline_routing_low_score(self) -> None:
+        """
+        Score = 40 → after_match_router sends to 'rewrite'.
+        The placeholder rewrite_node runs and raises the score to 75,
+        then match runs again → interview → review.
+        current_step ends on "reviewing" (post-rewrite path).
+        """
+        resume_run = _fake_agent_run("resume_agent")
+        jd_run     = _fake_agent_run("jd_agent")
+        # MatchAgent is called twice: first returns 40, second returns 75
+        # (rewrite_node bumps match_result directly, so MatchAgent is only
+        #  called once per graph invocation — the second pass uses the
+        #  placeholder-bumped score).  We set side_effect to cover both calls.
+        match_run  = _fake_agent_run("match_agent")
+
+        with patch("app.graph.workflow.ResumeAgent") as MR, \
+             patch("app.graph.workflow.JDAgent")    as MJ, \
+             patch("app.graph.workflow.MatchAgent") as MM:
+
+            MR.return_value.parse.return_value = (_fake_resume_model(), resume_run)
+            MJ.return_value.parse.return_value = (_fake_jd_model(),    jd_run)
+            # First match call → score 40 → triggers rewrite placeholder
+            # rewrite_node bumps to 75 → second match call → score 75 → interview
+            MM.return_value.match.side_effect = [
+                (_fake_match_model(40.0), match_run),
+                (_fake_match_model(75.0), match_run),
+            ]
+
+            state = run_full_pipeline(
+                resume_file_path="/fake/resume.pdf",
+                jd_text="some JD",
+                thread_id=_unique_thread(),
+            )
+
+        assert state["error"] is None
+        # After rewrite loop: score was bumped to ≥ 70, then interview → review
+        assert state["current_step"] in {"rewriting", "interviewing", "reviewing"}
+        # Match was called twice (first pass → rewrite → second pass)
+        assert MM.return_value.match.call_count == 2
+
+    def test_pipeline_routing_high_score(self) -> None:
+        """
+        Score = 85 → after_match_router sends directly to 'interview', skipping rewrite.
+        current_step ends on "reviewing".
+        """
+        resume_run = _fake_agent_run("resume_agent")
+        jd_run     = _fake_agent_run("jd_agent")
+        match_run  = _fake_agent_run("match_agent")
+
+        with patch("app.graph.workflow.ResumeAgent") as MR, \
+             patch("app.graph.workflow.JDAgent")    as MJ, \
+             patch("app.graph.workflow.MatchAgent") as MM:
+
+            MR.return_value.parse.return_value = (_fake_resume_model(), resume_run)
+            MJ.return_value.parse.return_value = (_fake_jd_model(),    jd_run)
+            MM.return_value.match.return_value = (_fake_match_model(85.0), match_run)
+
+            state = run_full_pipeline(
+                resume_file_path="/fake/resume.pdf",
+                jd_text="some JD",
+                thread_id=_unique_thread(),
+            )
+
+        assert state["error"] is None
+        assert state["current_step"] in {"interviewing", "reviewing"}
+        # Match called exactly once — no rewrite loop
+        assert MM.return_value.match.call_count == 1
+        assert state["match_result"]["overall_score"] == 85.0

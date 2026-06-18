@@ -245,6 +245,137 @@ def after_match_router(state: JobHelperState) -> str:
 
 
 # =============================================================================
+# Single-node mini-graphs (parse-only pipelines)
+# =============================================================================
+# These compile separate single-node graphs so callers can run just the resume
+# or JD parsing step without invoking the full pipeline.  Using dedicated
+# mini-graphs (rather than interrupting the main graph) keeps each function
+# self-contained and trivially testable.
+# =============================================================================
+
+def _build_parse_resume_graph() -> StateGraph:
+    b = StateGraph(JobHelperState)
+    b.add_node("parse_resume", parse_resume_node)
+    b.add_edge(START, "parse_resume")
+    b.add_edge("parse_resume", END)
+    return b
+
+def _build_parse_jd_graph() -> StateGraph:
+    b = StateGraph(JobHelperState)
+    b.add_node("parse_jd", parse_jd_node)
+    b.add_edge(START, "parse_jd")
+    b.add_edge("parse_jd", END)
+    return b
+
+
+_parse_resume_graph = _build_parse_resume_graph().compile()
+_parse_jd_graph     = _build_parse_jd_graph().compile()
+
+
+def _empty_state(user_id: str) -> JobHelperState:
+    """Minimal blank initial state."""
+    return {
+        "user_id":            user_id,
+        "resume_file_path":   None,
+        "jd_text":            None,
+        "resume":             None,
+        "resume_raw_text":    None,
+        "jd":                 None,
+        "match_result":       None,
+        "rewrite_history":    [],
+        "interview_messages": [],
+        "interview_review":   None,
+        "current_step":       "idle",
+        "error":              None,
+        "agent_runs":         [],
+    }
+
+
+def run_parse_resume(
+    file_path: str,
+    user_id: str = "default",
+) -> tuple[dict | None, list[dict]]:
+    """
+    Run only the resume-parsing step and return its output.
+
+    Invokes a dedicated single-node graph (not the full pipeline) so the
+    caller gets structured output without triggering JD parsing or matching.
+
+    Args:
+        file_path: Absolute path to the resume file (.pdf or .docx).
+        user_id:   Caller's user ID (stored in state for observability).
+
+    Returns:
+        (parsed_resume_dict, agent_runs_list)
+
+        parsed_resume_dict is None when parsing fails; in that case
+        agent_runs_list contains a single entry with status="error".
+    """
+    initial = _empty_state(user_id)
+    initial["resume_file_path"] = file_path
+
+    final = _parse_resume_graph.invoke(initial)
+
+    return final.get("resume"), final.get("agent_runs", [])
+
+
+def run_parse_jd(
+    jd_text: str,
+    user_id: str = "default",
+) -> tuple[dict | None, list[dict]]:
+    """
+    Run only the JD-parsing step and return its output.
+
+    Args:
+        jd_text: Raw job-description text or a public HTTP/HTTPS URL.
+        user_id: Caller's user ID.
+
+    Returns:
+        (parsed_jd_dict, agent_runs_list)
+
+        parsed_jd_dict is None when parsing fails; in that case
+        agent_runs_list contains a single entry with status="error".
+    """
+    initial = _empty_state(user_id)
+    initial["jd_text"] = jd_text
+
+    final = _parse_jd_graph.invoke(initial)
+
+    return final.get("jd"), final.get("agent_runs", [])
+
+
+def run_full_pipeline(
+    resume_file_path: str,
+    jd_text: str,
+    user_id: str = "default",
+    thread_id: Optional[str] = None,
+) -> dict:
+    """
+    Run the complete workflow: parse_resume → parse_jd → match → route.
+
+    With the current placeholder nodes, the graph ends after the routing
+    decision (rewrite or interview placeholders run and fall through to END).
+    When Phase 4/5 agents are wired in, those phases run automatically.
+
+    Args:
+        resume_file_path: Absolute path to the resume file (.pdf or .docx).
+        jd_text:          Raw JD text or a public HTTP/HTTPS URL.
+        user_id:          Caller's user ID; used as the default thread_id.
+        thread_id:        Explicit checkpoint thread ID. Defaults to user_id.
+
+    Returns:
+        Final JobHelperState dict.  Check state["error"] to detect failures;
+        it will be None on success and contain the error message on failure.
+    """
+    return run_workflow(
+        user_id=user_id,
+        resume_file_path=resume_file_path,
+        jd_text=jd_text,
+        thread_id=thread_id,
+    )
+
+
+# =============================================================================
 # Graph construction — compiled once at module level with MemorySaver
 # =============================================================================
 
