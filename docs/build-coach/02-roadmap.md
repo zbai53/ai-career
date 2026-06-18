@@ -70,12 +70,12 @@
 
 > Wire the agents into a state machine. This is the core differentiator.
 
-- [ ] **Day 16:** Study LangGraph docs: read quickstart, state graph concepts, checkpointing. Run 2-3 official examples locally.
-- [ ] **Day 17:** Define `JobHelperState` (TypedDict): user_id, resume, jd, match_result, rewrite_history, interview, current_step. Define graph nodes (one per agent).
-- [ ] **Day 18:** Define edges: conditional routing based on state. Implement the flow: idle → parsing_resume → parsing_jd → matching → (rewriting | interviewing). Add checkpoint persistence (SqliteSaver or PostgresSaver).
-- [ ] **Day 19:** Wire LangGraph into the FastAPI endpoints. Spring Boot calls the graph's entry point instead of individual agents. Test the full flow via API calls.
-- [ ] **Day 20:** Add error handling: what happens if an agent fails mid-flow? Implement retry logic and graceful degradation. Add state visualization export (LangGraph → Mermaid diagram).
-- [ ] **Day 21:** Write integration tests for the full graph. Export the Mermaid diagram to `docs/`. Buffer day.
+- [x] **Day 16:** Study LangGraph docs: read quickstart, state graph concepts, checkpointing. Run 2-3 official examples locally.
+- [x] **Day 17:** Define `JobHelperState` (TypedDict): user_id, resume, jd, match_result, rewrite_history, interview, current_step. Define graph nodes (one per agent).
+- [x] **Day 18:** Define edges: conditional routing based on state. Implement the flow: idle → parsing_resume → parsing_jd → matching → (rewriting | interviewing). Add checkpoint persistence (SqliteSaver or PostgresSaver).
+- [x] **Day 19:** Wire LangGraph into the FastAPI endpoints. Spring Boot calls the graph's entry point instead of individual agents. Test the full flow via API calls.
+- [x] **Day 20:** Add error handling: what happens if an agent fails mid-flow? Implement retry logic and graceful degradation. Add state visualization export (LangGraph → Mermaid diagram).
+- [x] **Day 21:** Write integration tests for the full graph. Export the Mermaid diagram to `docs/`. Buffer day.
 
 **Understand before moving on:**
 - Why LangGraph over plain LangChain? What does the state graph give us that a linear chain doesn't?

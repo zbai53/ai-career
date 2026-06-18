@@ -153,6 +153,163 @@ All component scores are on a 0–100 scale. See [match-eval-v1.md](../evaluatio
 
 ---
 
+### Pipeline
+
+#### `POST /api/pipeline/run`
+
+One-click browser-friendly endpoint: upload a resume file and paste JD text to
+receive the complete workflow result (parse resume → parse JD → match → route)
+in a single call.  Handles temporary file management internally.
+
+**Request** — `multipart/form-data`
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `file` | binary | yes | `.pdf` or `.docx` |
+| `jd_text` | string | yes | Raw JD text (not a URL) |
+| `user_id` | string | no | Defaults to `"default"` |
+
+**Response 200**
+
+```json
+{
+  "current_step":    "reviewing",
+  "resume":          { /* ParsedResume */ },
+  "jd":              { /* ParsedJobDescription */ },
+  "match_result": {
+    "overall_score": 78.2,
+    "skill_score":   70.0,
+    "experience_score": 100.0,
+    "keyword_score": 66.7,
+    "gap_analysis":  { "..." : "..." }
+  },
+  "routing":         "interview",
+  "workflow_status": "completed",
+  "steps_completed": ["parse_resume", "parse_jd", "match"],
+  "total_duration_ms": 3420,
+  "total_tokens":    1840,
+  "agent_runs":      [ /* log entries */ ],
+  "error":           null
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `routing` | `"interview"` \| `"rewrite"` | `"interview"` when `overall_score >= 70` |
+| `workflow_status` | string | `"completed"`, `"degraded"`, or `"failed"` |
+| `steps_completed` | `list[string]` | Node names of all successful agent steps |
+| `total_duration_ms` | integer | Sum of `duration_ms` across all agent runs |
+| `total_tokens` | integer | Sum of `token_count` across all agent runs |
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 400 | Unsupported file extension | `{"error": "Unsupported file type '...'. Upload a .pdf or .docx file."}` |
+| 500 | Any agent or graph failure | `{"error": "<message>", "workflow_status": "failed", "agent_runs": [...]}` |
+
+---
+
+### Workflow
+
+#### `POST /api/workflow/run`
+
+Invoke the full LangGraph workflow with explicit file paths.  Intended for
+server-to-server calls from Spring Boot (which has already persisted the files)
+rather than for browser clients.  For browser use, prefer `POST /api/pipeline/run`.
+
+**Request** — `application/json`
+
+```json
+{
+  "user_id":          "user-42",
+  "resume_file_path": "/data/uploads/jane_doe.pdf",
+  "jd_text":          "We are hiring a backend engineer...",
+  "thread_id":        "user-42-resume-1-jd-3"
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `user_id` | string | yes | Scopes the checkpoint namespace |
+| `resume_file_path` | string \| null | no | Absolute path to the resume on the agent-service host |
+| `jd_text` | string \| null | no | Raw JD text or a `https://` URL |
+| `thread_id` | string \| null | no | Explicit checkpoint ID; defaults to `user_id` |
+
+**Response 200** — Full `JobHelperState` dict merged with summary fields (same shape as `POST /api/pipeline/run`, without the `routing` field).
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 500 | Any agent or graph failure | `{"error": "<message>", "workflow_status": "failed", "agent_runs": [...]}` |
+
+---
+
+#### `GET /api/workflow/status/{thread_id}`
+
+Return the current checkpoint state for a running or completed workflow.
+Safe to poll repeatedly; read-only — does not advance the graph.
+
+**Path parameter:** `thread_id` — the ID passed when invoking the workflow.
+
+**Response 200**
+
+```json
+{
+  "thread_id":    "user-42-resume-1-jd-3",
+  "current_step": "matching",
+  "next":         ["__after_match__"],
+  "is_complete":  false,
+  "error":        null,
+  "match_result": null,
+  "agent_runs":   2,
+  "created_at":   "2026-06-18T10:15:03.421Z"
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `next` | `list[string]` | Pending node names; `[]` when the workflow has finished |
+| `is_complete` | boolean | `true` when `next == []` |
+| `agent_runs` | integer | Count of accumulated agent_run entries (not the full list) |
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | No checkpoint found for `thread_id` | `{"error": "No checkpoint found for thread_id '...': <detail>"}` |
+
+---
+
+#### `GET /api/workflow/visualize`
+
+Return the Mermaid diagram source of the compiled workflow graph.
+
+**Response 200**
+
+```json
+{
+  "mermaid": "---\nconfig:\n  flowchart:\n    curve: linear\n---\ngraph TD;\n    __start__..."
+}
+```
+
+---
+
+#### `GET /api/workflow/visualize/html`
+
+Return an HTML page that renders the workflow diagram in the browser via
+Mermaid JS (CDN-hosted).  Open directly in a browser tab.
+
+**Response 200** — `text/html`
+
+The rendered page includes the full graph diagram with:
+- Node shapes matching LangGraph conventions (rounded boxes for nodes, diamonds for routers)
+- Solid edges for unconditional transitions, dashed edges for conditional ones
+- A styled layout via the linear curve Mermaid config
+
+---
+
 ## Main Service (Spring Boot) — port 8080
 
 ### Health
@@ -357,28 +514,48 @@ Return the most recent agent run records across all agents, ordered by `created_
 ## Cross-Service Flow
 
 ```
-Client
+Browser / API Client
   │
   ▼
 Main Service :8080
-  │  POST /api/resumes/parse      (multipart) ──────────────┐
-  │  POST /api/jds/parse          (JSON)                     │
-  │  POST /api/match              (JSON: resumeId + jdId) ───┤
-  │  GET  /api/match/{id}         (DB lookup, no agent call) │
-  │  GET  /api/agent-runs/recent  (DB lookup, no agent call) │
-  │                                                           │
-  ▼                                                           │
-Agent Service :8001  ◄─────────────────────────────────────┘
-  │  POST /api/resume/parse    (multipart, forwarded bytes)
-  │  POST /api/jd/parse        (JSON, text or url)
-  │  POST /api/match           (JSON: resume + jd objects)
+  │  POST /api/resumes/parse      (multipart) ──────────────────┐
+  │  POST /api/jds/parse          (JSON)                         │
+  │  POST /api/match              (JSON: resumeId + jdId)  ──────┤
+  │  POST /api/workflow/run       (JSON: resumeId + jdId)  ──────┤
+  │  GET  /api/workflow/status/{threadId}  ──────────────────────┤
+  │  GET  /api/match/{id}         (DB lookup, no agent call)     │
+  │  GET  /api/agent-runs/recent  (DB lookup, no agent call)     │
+  │                                                               │
+  ▼                                                               │
+Agent Service :8001  ◄───────────────────────────────────────────┘
+  │
+  ├── POST /api/resume/parse          (multipart, forwarded bytes)
+  ├── POST /api/jd/parse              (JSON, text or url)
+  ├── POST /api/match                 (JSON: resume + jd objects)
+  ├── POST /api/pipeline/run          (multipart: file + jd_text)
+  ├── POST /api/workflow/run          (JSON: file path + jd text)
+  ├── GET  /api/workflow/status/{id}  (checkpoint poll, read-only)
+  ├── GET  /api/workflow/visualize    (Mermaid JSON)
+  └── GET  /api/workflow/visualize/html (rendered diagram page)
   │
   ▼
-Anthropic Claude API
-  (claude-haiku-4-5-20251001)
-  └── resume_agent: full parse
-  └── jd_agent:     full parse
-  └── match_agent:  gap analysis only (scoring is pure Python)
+LangGraph Workflow (in-process)
+  parse_resume → parse_jd → match → (rewrite | interview) → review
+  │   retry_node wraps each real-agent node (max 2 retries)
+  │   match_node falls back to degraded mode if Claude gap analysis fails
+  └── MemorySaver checkpoints every node transition under thread_id
+  │
+  ▼
+Anthropic Claude API  (claude-haiku-4-5-20251001)
+  ├── resume_agent:  full structured parse (PDF/DOCX text → ParsedResume)
+  ├── jd_agent:      full structured parse (text/URL → ParsedJobDescription)
+  └── match_agent:   gap analysis only (skill/exp/keyword scores are pure Python)
 ```
 
-Clients may also call the Agent Service directly on port 8001 if they do not need the persistence layer provided by the Main Service.
+**Direct agent-service access:** browser clients may call `POST /api/pipeline/run`
+on port 8001 directly for a single-call upload flow that does not require the
+persistence layer provided by the Main Service.
+
+**Polling pattern:** after calling `POST /api/workflow/run`, callers may poll
+`GET /api/workflow/status/{threadId}` until `is_complete == true` to show
+real-time progress without blocking on the long-running workflow response.
