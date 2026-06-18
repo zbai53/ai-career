@@ -4,7 +4,14 @@ LangGraph workflow for the AI Career assistant.
 parse_resume_node, parse_jd_node, and match_node call real agents.
 rewrite_node, interview_node, and review_node remain placeholders for Phase 4/5.
 
-The graph is compiled with a MemorySaver checkpointer, so any run can be
+Error handling model
+--------------------
+Every real-agent node catches exceptions internally and writes the error into
+state["error"].  A dedicated check_error() routing function sits after each
+such node and diverts to error_handler_node when an error is detected.
+error_handler_node logs the error and transitions the workflow to END cleanly.
+
+The graph is compiled with a MemorySaver checkpointer so any run can be
 inspected or resumed via a thread_id.
 
 Run from agent-service/ (no real files needed — uses placeholder nodes):
@@ -16,6 +23,7 @@ Run with real agents (requires ANTHROPIC_API_KEY and an actual resume file):
 
 from __future__ import annotations
 
+import logging
 import sys
 from typing import Optional
 
@@ -28,6 +36,46 @@ from app.agents.resume_agent import ResumeAgent
 from app.graph.state import JobHelperState
 from app.models.job_description import ParsedJobDescription
 from app.models.resume import ParsedResume
+from app.utils.agent_logger import log_agent_run
+
+logger = logging.getLogger(__name__)
+
+_FAILED_RUN_MODEL = "claude-haiku-4-5-20251001"
+
+
+# =============================================================================
+# Internal helpers
+# =============================================================================
+
+def _failed_agent_run(agent_name: str, error_message: str) -> dict:
+    """Build a failed agent_run entry without a real Claude call."""
+    return log_agent_run(
+        agent_name=agent_name,
+        input_summary="(failed before agent call)",
+        output_summary="(no output — node failed)",
+        status="error",
+        duration_ms=0,
+        token_count=0,
+        model_name=_FAILED_RUN_MODEL,
+        error_message=error_message,
+    )
+
+
+# =============================================================================
+# Error handler node
+# =============================================================================
+
+def error_handler_node(state: JobHelperState) -> dict:
+    """
+    Terminal error node.
+
+    Logs the error stored in state["error"] and sets current_step="error".
+    The graph routes here whenever any upstream node sets state["error"].
+    After this node the workflow transitions to END.
+    """
+    error_msg = state.get("error") or "unknown error"
+    logger.error("[workflow] error_handler_node: %s", error_msg)
+    return {"current_step": "error"}
 
 
 # =============================================================================
@@ -38,7 +86,13 @@ def parse_resume_node(state: JobHelperState) -> dict:
     """Call ResumeAgent to parse the uploaded file into a structured dict."""
     file_path = state.get("resume_file_path")
     if not file_path:
-        return {"current_step": "error", "error": "resume_file_path is not set in state"}
+        msg = "parse_resume_node: resume_file_path is not set in state"
+        logger.error("[workflow] %s", msg)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("resume_agent", msg)],
+        }
 
     try:
         agent = ResumeAgent()
@@ -51,14 +105,26 @@ def parse_resume_node(state: JobHelperState) -> dict:
             "error":           None,
         }
     except Exception as exc:
-        return {"current_step": "error", "error": f"parse_resume_node failed: {exc}"}
+        msg = f"parse_resume_node failed: {exc}"
+        logger.error("[workflow] %s", msg, exc_info=True)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("resume_agent", msg)],
+        }
 
 
 def parse_jd_node(state: JobHelperState) -> dict:
     """Call JDAgent to parse the JD text (or URL) into a structured dict."""
     jd_text = state.get("jd_text")
     if not jd_text:
-        return {"current_step": "error", "error": "jd_text is not set in state"}
+        msg = "parse_jd_node: jd_text is not set in state"
+        logger.error("[workflow] %s", msg)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("jd_agent", msg)],
+        }
 
     try:
         agent = JDAgent()
@@ -70,15 +136,33 @@ def parse_jd_node(state: JobHelperState) -> dict:
             "error":        None,
         }
     except Exception as exc:
-        return {"current_step": "error", "error": f"parse_jd_node failed: {exc}"}
+        msg = f"parse_jd_node failed: {exc}"
+        logger.error("[workflow] %s", msg, exc_info=True)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("jd_agent", msg)],
+        }
 
 
 def match_node(state: JobHelperState) -> dict:
     """Reconstruct Pydantic models from state dicts and call MatchAgent."""
     if not state.get("resume"):
-        return {"current_step": "error", "error": "match_node: resume is missing from state"}
+        msg = "match_node: resume is missing from state"
+        logger.error("[workflow] %s", msg)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("match_agent", msg)],
+        }
     if not state.get("jd"):
-        return {"current_step": "error", "error": "match_node: jd is missing from state"}
+        msg = "match_node: jd is missing from state"
+        logger.error("[workflow] %s", msg)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("match_agent", msg)],
+        }
 
     try:
         resume = ParsedResume.model_validate(state["resume"])
@@ -93,7 +177,13 @@ def match_node(state: JobHelperState) -> dict:
             "error":        None,
         }
     except Exception as exc:
-        return {"current_step": "error", "error": f"match_node failed: {exc}"}
+        msg = f"match_node failed: {exc}"
+        logger.error("[workflow] %s", msg, exc_info=True)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("match_agent", msg)],
+        }
 
 
 # =============================================================================
@@ -102,9 +192,8 @@ def match_node(state: JobHelperState) -> dict:
 
 def rewrite_node(state: JobHelperState) -> dict:
     """Placeholder — RewriteAgent wired in Phase 4."""
-    # Simulate a post-rewrite score improvement so the re-match routes to interview.
     updated_match = dict(state.get("match_result") or {})
-    updated_match["overall_score"] = 75
+    updated_match["overall_score"] = 75  # simulate post-rewrite improvement
     return {"current_step": "rewriting", "match_result": updated_match}
 
 
@@ -119,16 +208,34 @@ def review_node(state: JobHelperState) -> dict:
 
 
 # =============================================================================
-# Routing function
+# Routing functions
 # =============================================================================
+
+def _check_error(next_node: str):
+    """
+    Factory that returns a routing function for a specific next_node.
+
+    The returned function checks state["error"]:
+      - error present → "error_handler"
+      - no error      → next_node (the normal successor)
+    """
+    def _router(state: JobHelperState) -> str:
+        if state.get("error"):
+            return "error_handler"
+        return next_node
+    _router.__name__ = f"check_error_then_{next_node}"
+    return _router
+
 
 def after_match_router(state: JobHelperState) -> str:
     """
-    Route based on overall match score:
+    Route based on overall match score (called only when match_node succeeded):
       < 70  → rewrite  (improve the resume before practising interviews)
       >= 70 → interview (score strong enough, move to mock interview)
 
-    Error state always exits to END so the graph terminates cleanly.
+    The error guard below is never reached in the real graph (because _check_error
+    intercepts errors before this function is called), but it preserves correct
+    behaviour when after_match_router is called directly in tests.
     """
     if state.get("current_step") == "error":
         return END
@@ -147,26 +254,56 @@ _checkpointer = MemorySaver()
 def _build_graph() -> StateGraph:
     builder = StateGraph(JobHelperState)
 
-    builder.add_node("parse_resume", parse_resume_node)
-    builder.add_node("parse_jd",     parse_jd_node)
-    builder.add_node("match",        match_node)
-    builder.add_node("rewrite",      rewrite_node)
-    builder.add_node("interview",    interview_node)
-    builder.add_node("review",       review_node)
+    # --- nodes ---
+    builder.add_node("parse_resume",  parse_resume_node)
+    builder.add_node("parse_jd",      parse_jd_node)
+    builder.add_node("match",         match_node)
+    builder.add_node("rewrite",       rewrite_node)
+    builder.add_node("interview",     interview_node)
+    builder.add_node("review",        review_node)
+    builder.add_node("error_handler", error_handler_node)
 
-    builder.add_edge(START,          "parse_resume")
-    builder.add_edge("parse_resume", "parse_jd")
-    builder.add_edge("parse_jd",     "match")
+    # --- entry ---
+    builder.add_edge(START, "parse_resume")
 
+    # --- parse_resume → (error_handler | parse_jd) ---
     builder.add_conditional_edges(
-        "match",
-        after_match_router,
-        {"rewrite": "rewrite", "interview": "interview", END: END},
+        "parse_resume",
+        _check_error("parse_jd"),
+        {"error_handler": "error_handler", "parse_jd": "parse_jd"},
     )
 
-    builder.add_edge("rewrite",   "match")
-    builder.add_edge("interview", "review")
-    builder.add_edge("review",    END)
+    # --- parse_jd → (error_handler | match) ---
+    builder.add_conditional_edges(
+        "parse_jd",
+        _check_error("match"),
+        {"error_handler": "error_handler", "match": "match"},
+    )
+
+    # --- match → (error_handler | after_match_router) ---
+    builder.add_conditional_edges(
+        "match",
+        _check_error("__after_match__"),
+        {"error_handler": "error_handler", "__after_match__": "__after_match__"},
+    )
+
+    # hidden passthrough node to keep routing logic separate
+    builder.add_node("__after_match__", lambda s: {})
+    builder.add_conditional_edges(
+        "__after_match__",
+        after_match_router,
+        {"rewrite": "rewrite", "interview": "interview"},
+    )
+
+    # --- rewrite loops back to match ---
+    builder.add_edge("rewrite",       "match")
+
+    # --- interview path ---
+    builder.add_edge("interview",     "review")
+    builder.add_edge("review",        END)
+
+    # --- error handler exits ---
+    builder.add_edge("error_handler", END)
 
     return builder
 
@@ -241,45 +378,37 @@ def get_workflow_state(thread_id: str) -> dict:
 
 
 # =============================================================================
-# Main block — checkpoint demo (no real files required)
+# Main block — smoke test + error-path demo
 # =============================================================================
 
 if __name__ == "__main__":
-    # ------------------------------------------------------------------
-    # If a resume file and JD text are passed, run with real agents.
-    # Otherwise, demonstrate checkpointing with placeholder-only flow.
-    # ------------------------------------------------------------------
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
+
     if len(sys.argv) >= 3:
         # Real-agent run
         print("=" * 60)
         print("Real-agent run")
         print("=" * 60)
         final = run_workflow(
-            user_id=          "demo-user",
-            resume_file_path= sys.argv[1],
-            jd_text=          sys.argv[2],
-            thread_id=        "demo-thread-real",
+            user_id=         "demo-user",
+            resume_file_path=sys.argv[1],
+            jd_text=         sys.argv[2],
+            thread_id=       "demo-thread-real",
         )
         if final.get("error"):
             print(f"ERROR: {final['error']}")
             sys.exit(1)
         match = final.get("match_result") or {}
-        print(f"  current_step    : {final['current_step']}")
-        print(f"  overall_score   : {match.get('overall_score')}")
-        print(f"  agent_runs      : {len(final.get('agent_runs', []))} logged")
+        print(f"  current_step  : {final['current_step']}")
+        print(f"  overall_score : {match.get('overall_score')}")
+        print(f"  agent_runs    : {len(final.get('agent_runs', []))} logged")
         sys.exit(0)
 
     # ------------------------------------------------------------------
-    # Checkpoint demo — placeholder nodes, no API key needed
+    # Happy-path demo (pre-built state, real MatchAgent)
     # ------------------------------------------------------------------
-    print("=" * 60)
-    print("Checkpoint demo — placeholder nodes")
-    print("=" * 60)
-
-    # Run 1: inject pre-parsed data directly so placeholder match_node
-    # has something to work with (simulates state after real parsing).
-    from app.models.resume import ResumeContact, ResumeSkill
     from app.models.job_description import JDSkillRequirement
+    from app.models.resume import ResumeContact, ResumeSkill
 
     demo_resume = ParsedResume(
         contact=ResumeContact(name="Alex Demo", email="alex@example.com"),
@@ -305,10 +434,6 @@ if __name__ == "__main__":
         parse_confidence=0.92,
     )
 
-    THREAD_ID = "demo-checkpoint-thread"
-    config    = _make_config(THREAD_ID)
-
-    # Directly invoke graph with pre-built state (bypasses parse nodes)
     pre_built: JobHelperState = {
         "user_id":            "demo-user",
         "resume_file_path":   None,
@@ -320,46 +445,42 @@ if __name__ == "__main__":
         "rewrite_history":    [],
         "interview_messages": [],
         "interview_review":   None,
-        "current_step":       "parsing_jd",   # pretend parsing is done
+        "current_step":       "parsing_jd",
         "error":              None,
         "agent_runs":         [],
     }
 
-    print("\n[1] Running workflow with real MatchAgent + placeholder rewrite/interview/review …")
-    final_state = workflow_graph.invoke(pre_built, config=config)
-
-    print(f"\n    current_step  : {final_state['current_step']}")
+    print("=" * 60)
+    print("[1] Happy-path run (real MatchAgent + placeholder nodes)")
+    print("    (uses update_state to inject pre-parsed resume+jd, skipping parse nodes)")
+    print("=" * 60)
+    THREAD_HAPPY = "demo-happy"
+    cfg_happy = _make_config(THREAD_HAPPY)
+    # Inject state as if parse_jd just finished successfully.
+    # as_node="parse_jd" tells LangGraph that parse_jd was the last node to run,
+    # so the graph will resume from the conditional edge that follows it (→ match).
+    workflow_graph.update_state(cfg_happy, pre_built, as_node="parse_jd")
+    final_state = workflow_graph.invoke(None, config=cfg_happy)
     match_r = final_state.get("match_result") or {}
+    print(f"    current_step  : {final_state['current_step']}")
     print(f"    overall_score : {match_r.get('overall_score')}")
-    print(f"    skill_score   : {match_r.get('skill_score')}")
     print(f"    agent_runs    : {len(final_state.get('agent_runs', []))} logged")
 
     # ------------------------------------------------------------------
-    # Inspect checkpoint
+    # Error-path demo — missing resume_file_path triggers error_handler
     # ------------------------------------------------------------------
-    print("\n[2] Reading checkpoint via get_workflow_state() …")
-    snap = get_workflow_state(THREAD_ID)
-    print(f"    thread_id     : {THREAD_ID}")
-    print(f"    current_step  : {snap['values'].get('current_step')}")
-    print(f"    next nodes    : {snap['next']} (empty = workflow complete)")
-    print(f"    checkpoint at : {snap['created_at']}")
-    print(f"    step count    : {snap['metadata'].get('step')}")
+    print()
+    print("=" * 60)
+    print("[2] Error-path run (no resume_file_path → error_handler_node)")
+    print("=" * 60)
+    THREAD_ERR = "demo-error"
+    error_state = run_workflow(user_id="demo-user", jd_text="some JD text", thread_id=THREAD_ERR)
+    print(f"    current_step  : {error_state['current_step']}")
+    print(f"    error         : {error_state['error']}")
+    print(f"    agent_runs    : {len(error_state.get('agent_runs', []))} (failed run logged)")
 
-    # ------------------------------------------------------------------
-    # Second thread — demonstrates independent checkpoint namespacing
-    # ------------------------------------------------------------------
-    print("\n[3] Running a second independent thread to show namespace isolation …")
-    THREAD_ID_2 = "demo-checkpoint-thread-2"
-    config2     = _make_config(THREAD_ID_2)
-
-    pre_built_2 = dict(pre_built)
-    pre_built_2["match_result"] = {"overall_score": 85}   # already high score
-    final_state_2 = workflow_graph.invoke(pre_built_2, config=config2)
-
-    snap2 = get_workflow_state(THREAD_ID_2)
-    print(f"    thread 1 step : {get_workflow_state(THREAD_ID)['values'].get('current_step')}")
-    print(f"    thread 2 step : {snap2['values'].get('current_step')}")
-    print("    (each thread maintains its own independent checkpoint history)")
+    snap_err = get_workflow_state(THREAD_ERR)
+    print(f"    checkpoint    : step={snap_err['metadata'].get('step')}, next={snap_err['next']}")
 
     # ------------------------------------------------------------------
     # Mermaid

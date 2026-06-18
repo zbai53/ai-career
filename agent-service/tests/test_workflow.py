@@ -2,9 +2,17 @@
 Tests for the LangGraph workflow node functions and routing logic.
 
 All agent calls are mocked — no real Anthropic API calls are made.
+
+Unit tests (TestParseResumeNode, TestParseJdNode, TestMatchNode, TestAfterMatchRouter)
+call node functions directly.
+
+Integration tests (TestWorkflowIntegration) invoke the full compiled graph via
+run_workflow() and get_workflow_state(), using unique thread_ids to keep the
+module-level MemorySaver checkpoint namespaces isolated between tests.
 """
 
 import os
+import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -13,9 +21,11 @@ import pytest
 from app.graph.state import JobHelperState
 from app.graph.workflow import (
     after_match_router,
+    get_workflow_state,
     match_node,
     parse_jd_node,
     parse_resume_node,
+    run_workflow,
 )
 
 
@@ -319,3 +329,225 @@ class TestAfterMatchRouter:
         """No match_result → score defaults to 0 → rewrite."""
         state = _base_state(match_result=None)
         assert after_match_router(state) == "rewrite"
+
+
+# ---------------------------------------------------------------------------
+# Integration helpers
+# ---------------------------------------------------------------------------
+
+def _unique_thread() -> str:
+    """Return a unique thread_id so MemorySaver namespaces never collide."""
+    return f"test-{uuid.uuid4().hex}"
+
+
+def _fake_resume_model(score: float = 80.0) -> MagicMock:
+    """Fake ParsedResume returned by a mocked ResumeAgent.parse()."""
+    m = MagicMock()
+    m.raw_text = "Jane Doe\njane@example.com\nPython FastAPI"
+    m.model_dump.return_value = {
+        "contact": {"name": "Jane Doe", "email": "jane@example.com"},
+        "skills": [],
+        "experience": [],
+        "education": [],
+        "projects": [],
+        "certifications": [],
+        "raw_text": "Jane Doe\njane@example.com\nPython FastAPI",
+        "parse_confidence": 0.9,
+    }
+    return m
+
+
+def _fake_jd_model() -> MagicMock:
+    """Fake ParsedJobDescription returned by a mocked JDAgent.parse()."""
+    m = MagicMock()
+    m.model_dump.return_value = {
+        "title": "Backend Engineer",
+        "company": "Acme Corp",
+        "skills": [],
+        "keywords": [],
+        "raw_text": "Backend Engineer Python FastAPI",
+        "parse_confidence": 0.9,
+    }
+    return m
+
+
+def _fake_match_model(overall_score: float = 80.0) -> MagicMock:
+    """Fake MatchResult returned by a mocked MatchAgent.match()."""
+    m = MagicMock()
+    m.model_dump.return_value = {
+        "overall_score":          overall_score,
+        "skill_score":            75.0,
+        "experience_score":       80.0,
+        "keyword_score":          85.0,
+        "missing_required_skills": [],
+        "missing_preferred_skills": [],
+        "improvement_suggestions":  [],
+        "interview_focus_areas":    [],
+        "overall_assessment":       "Strong match.",
+    }
+    return m
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — full compiled graph via run_workflow()
+# ---------------------------------------------------------------------------
+
+class TestWorkflowIntegration:
+    """
+    These tests invoke the full compiled LangGraph via run_workflow().
+    Each test uses a unique thread_id so the shared MemorySaver does not
+    bleed state between runs.
+    """
+
+    def test_full_workflow_happy_path(self) -> None:
+        """
+        All three agents succeed.  Expect the full graph to complete with
+        resume, jd, and match_result populated and three agent_run entries.
+        """
+        resume_run  = _fake_agent_run("resume_agent")
+        jd_run      = _fake_agent_run("jd_agent")
+        match_run   = _fake_agent_run("match_agent")
+
+        with patch("app.graph.workflow.ResumeAgent") as MockResume, \
+             patch("app.graph.workflow.JDAgent")    as MockJD,     \
+             patch("app.graph.workflow.MatchAgent") as MockMatch:
+
+            MockResume.return_value.parse.return_value  = (_fake_resume_model(), resume_run)
+            MockJD.return_value.parse.return_value      = (_fake_jd_model(),    jd_run)
+            MockMatch.return_value.match.return_value   = (_fake_match_model(80.0), match_run)
+
+            final = run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/resume.pdf",
+                jd_text="We are hiring a backend engineer.",
+                thread_id=_unique_thread(),
+            )
+
+        # Core outputs
+        assert final["resume"]       is not None, "resume must be populated"
+        assert final["jd"]           is not None, "jd must be populated"
+        assert final["match_result"] is not None, "match_result must be populated"
+
+        # Three distinct agent_run entries (one per agent)
+        assert len(final["agent_runs"]) == 3
+        agent_names = [r["agent_name"] for r in final["agent_runs"]]
+        assert "resume_agent" in agent_names
+        assert "jd_agent"     in agent_names
+        assert "match_agent"  in agent_names
+
+        # Workflow progressed past matching
+        assert final["current_step"] in {"matching", "rewriting", "interviewing", "reviewing"}
+        assert final["error"] is None
+
+    def test_workflow_resume_parse_error(self) -> None:
+        """
+        ResumeAgent raises an exception.  The error must propagate through
+        parse_resume_node → error_handler_node → END without reaching JDAgent
+        or MatchAgent.
+        """
+        with patch("app.graph.workflow.ResumeAgent") as MockResume, \
+             patch("app.graph.workflow.JDAgent")    as MockJD,     \
+             patch("app.graph.workflow.MatchAgent") as MockMatch:
+
+            MockResume.return_value.parse.side_effect = RuntimeError("PDF is corrupted")
+
+            final = run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/bad.pdf",
+                jd_text="some jd text",
+                thread_id=_unique_thread(),
+            )
+
+        assert final["current_step"] == "error"
+        assert final["error"] is not None
+        assert "PDF is corrupted" in final["error"]
+
+        # Nodes after parse_resume must never have been reached
+        assert final["resume"] is None
+        assert final["jd"]     is None
+
+        # JDAgent and MatchAgent must not have been invoked at all
+        MockJD.return_value.parse.assert_not_called()
+        MockMatch.return_value.match.assert_not_called()
+
+        # A failed agent_run entry must still be logged
+        assert len(final["agent_runs"]) >= 1
+        assert final["agent_runs"][0]["status"] == "error"
+
+    def test_workflow_jd_parse_error(self) -> None:
+        """
+        ResumeAgent succeeds but JDAgent raises.  The resume dict must be
+        present in state while jd and match_result stay None.
+        """
+        resume_run = _fake_agent_run("resume_agent")
+
+        with patch("app.graph.workflow.ResumeAgent") as MockResume, \
+             patch("app.graph.workflow.JDAgent")    as MockJD,     \
+             patch("app.graph.workflow.MatchAgent") as MockMatch:
+
+            MockResume.return_value.parse.return_value = (_fake_resume_model(), resume_run)
+            MockJD.return_value.parse.side_effect = ValueError("JD page returned 403")
+
+            final = run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/resume.pdf",
+                jd_text="https://jobs.example.com/123",
+                thread_id=_unique_thread(),
+            )
+
+        assert final["current_step"] == "error"
+        assert final["error"] is not None
+        assert "403" in final["error"]
+
+        # Resume was parsed before the failure
+        assert final["resume"] is not None
+        assert final["resume"]["contact"]["name"] == "Jane Doe"
+
+        # JD and match must not be populated
+        assert final["jd"]           is None
+        assert final["match_result"] is None
+
+        # MatchAgent must never have been reached
+        MockMatch.return_value.match.assert_not_called()
+
+    def test_workflow_checkpoint_resume(self) -> None:
+        """
+        After a successful run the checkpoint must be inspectable via
+        get_workflow_state().  The snapshot must reflect the final state
+        and indicate the workflow is complete (next == []).
+        """
+        resume_run = _fake_agent_run("resume_agent")
+        jd_run     = _fake_agent_run("jd_agent")
+        match_run  = _fake_agent_run("match_agent")
+
+        thread_id = _unique_thread()
+
+        with patch("app.graph.workflow.ResumeAgent") as MockResume, \
+             patch("app.graph.workflow.JDAgent")    as MockJD,     \
+             patch("app.graph.workflow.MatchAgent") as MockMatch:
+
+            MockResume.return_value.parse.return_value = (_fake_resume_model(), resume_run)
+            MockJD.return_value.parse.return_value     = (_fake_jd_model(),    jd_run)
+            MockMatch.return_value.match.return_value  = (_fake_match_model(80.0), match_run)
+
+            run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/resume.pdf",
+                jd_text="We are hiring a backend engineer.",
+                thread_id=thread_id,
+            )
+
+        snap = get_workflow_state(thread_id)
+
+        # Snapshot must carry the final state values
+        assert snap["values"] is not None
+        assert snap["values"].get("match_result") is not None
+        assert snap["values"].get("error") is None
+
+        # next == [] means the workflow has fully completed
+        assert snap["next"] == [], f"Expected no pending nodes, got: {snap['next']}"
+
+        # Checkpoint metadata and timestamp must be present
+        assert snap["created_at"] is not None
+        assert snap["metadata"] is not None
+        assert snap["metadata"].get("step") is not None

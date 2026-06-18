@@ -23,16 +23,19 @@ public class AgentServiceClient {
 
     private final RestTemplate restTemplate;
     private final RestTemplate agentRestTemplate;
+    private final RestTemplate workflowRestTemplate;
     private final String agentServiceUrl;
     private final ObjectMapper objectMapper;
 
     public AgentServiceClient(
             RestTemplate restTemplate,
             @Qualifier("agentRestTemplate") RestTemplate agentRestTemplate,
+            @Qualifier("workflowRestTemplate") RestTemplate workflowRestTemplate,
             AgentServiceConfig agentServiceConfig,
             ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
         this.agentRestTemplate = agentRestTemplate;
+        this.workflowRestTemplate = workflowRestTemplate;
         this.agentServiceUrl = agentServiceConfig.getAgentServiceUrl();
         this.objectMapper = objectMapper;
     }
@@ -170,6 +173,76 @@ public class AgentServiceClient {
         } catch (HttpClientErrorException | HttpServerErrorException e) {
             throw new RuntimeException(
                     "Match request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
+        }
+    }
+
+    /**
+     * Invokes the full LangGraph workflow on the agent-service.
+     *
+     * <p>The workflow chains ResumeAgent → JDAgent → MatchAgent internally.
+     * Inputs are file path and JD text that the Python service will process
+     * directly, so the caller provides the raw values rather than parsed JSON.
+     *
+     * @param resumeFilePath absolute path to the resume file on the agent-service host
+     * @param jdText         raw job description text (or a public URL)
+     * @param userId         caller's user ID (used as the default thread_id)
+     * @param threadId       optional checkpoint thread ID; null → defaults to userId
+     * @return raw JSON string of the final workflow state (includes match_result, agent_runs, etc.)
+     */
+    public String runWorkflow(String resumeFilePath, String jdText, String userId, String threadId) {
+        String endpoint = agentServiceUrl + "/api/workflow/run";
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("user_id", userId);
+        if (resumeFilePath != null) body.put("resume_file_path", resumeFilePath);
+        if (jdText        != null) body.put("jd_text",           jdText);
+        if (threadId      != null) body.put("thread_id",         threadId);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+        try {
+            ResponseEntity<String> response = workflowRestTemplate.postForEntity(endpoint, request, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException(
+                        "Workflow run failed with status " + response.getStatusCode()
+                                + ": " + response.getBody());
+            }
+            return response.getBody();
+        } catch (ResourceAccessException e) {
+            throw new RuntimeException(
+                    "Could not reach agent-service workflow endpoint (connection/timeout): " + e.getMessage(), e);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            throw new RuntimeException(
+                    "Workflow run request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
+        }
+    }
+
+    /**
+     * Fetches the current checkpoint state for a given workflow thread.
+     *
+     * @param threadId the thread_id used when {@link #runWorkflow} was called
+     * @return raw JSON string with current_step, next, is_complete, match_result, etc.
+     */
+    public String getWorkflowStatus(String threadId) {
+        String endpoint = agentServiceUrl + "/api/workflow/status/" + threadId;
+
+        try {
+            ResponseEntity<String> response = restTemplate.getForEntity(endpoint, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException(
+                        "Workflow status failed with status " + response.getStatusCode()
+                                + ": " + response.getBody());
+            }
+            return response.getBody();
+        } catch (ResourceAccessException e) {
+            throw new RuntimeException(
+                    "Could not reach agent-service status endpoint (connection/timeout): " + e.getMessage(), e);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            throw new RuntimeException(
+                    "Workflow status request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
         }
     }
 

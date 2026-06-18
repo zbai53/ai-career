@@ -35,4 +35,16 @@ public class AgentServiceConfig {
         factory.setReadTimeout(60_000);
         return new RestTemplate(factory);
     }
+
+    /**
+     * RestTemplate with a 120-second read timeout for workflow calls that chain
+     * multiple agent invocations (resume parse → JD parse → match).
+     */
+    @Bean("workflowRestTemplate")
+    public RestTemplate workflowRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(120_000);
+        return new RestTemplate(factory);
+    }
 }

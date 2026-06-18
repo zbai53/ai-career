@@ -24,6 +24,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/jds/**").permitAll()
                 .requestMatchers("/api/match/**").permitAll()
                 .requestMatchers("/api/agent-runs/**").permitAll()
+                .requestMatchers("/api/workflow/**").permitAll()
                 // TODO: lock down endpoints once authentication is implemented
                 .anyRequest().permitAll()
             );
