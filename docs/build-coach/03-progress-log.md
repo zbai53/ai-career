@@ -5,6 +5,20 @@
 
 ---
 
+## Day 20 — 2025-06-18 (Phase 3: LangGraph Orchestration)
+
+**Completed:**
+- Added retry_node wrapper: auto-retry failed nodes up to 2 times with delay
+- Implemented degraded mode for match: returns scores even if Claude gap analysis fails
+- Added workflow_status tracking: running/completed/degraded/failed
+- Created visualization endpoints: GET /api/workflow/visualize (Mermaid JSON), /visualize/html (browser-renderable)
+- Pipeline response now includes: workflow_status, steps_completed, total_duration_ms, total_tokens
+- Tests for retry success, retry exhaustion, degraded mode, visualization
+
+**Blockers:** None
+
+**Next:** Day 21 — Phase 3 wrap-up: integration tests, Mermaid export to docs, mark roadmap complete
+
 ## Day 19 — 2025-06-18 (Phase 3: LangGraph Orchestration)
 
 **Completed:**
