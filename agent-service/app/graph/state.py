@@ -93,6 +93,17 @@ class JobHelperState(TypedDict):
     """Caller's user ID. Set at graph entry, never modified by nodes."""
 
     # -------------------------------------------------------------------------
+    # Raw inputs (set by the caller before invoking the graph)
+    # -------------------------------------------------------------------------
+    resume_file_path: Optional[str]
+    """Absolute path to the uploaded resume file (.pdf or .docx).
+    Set by the FastAPI endpoint; consumed and cleared after parse_resume_node runs."""
+
+    jd_text: Optional[str]
+    """Raw job-description text (or a URL string).
+    Set by the FastAPI endpoint; consumed after parse_jd_node runs."""
+
+    # -------------------------------------------------------------------------
     # Parsed inputs
     # -------------------------------------------------------------------------
     resume: Optional[dict]
