@@ -5,6 +5,20 @@
 
 ---
 
+## Day 19 — 2025-06-18 (Phase 3: LangGraph Orchestration)
+
+**Completed:**
+- Created workflow helper functions: run_parse_resume(), run_parse_jd(), run_full_pipeline()
+- Updated FastAPI endpoints to use LangGraph workflow internally (backward compatible)
+- Added POST /api/pipeline/run — one-click endpoint: upload resume + paste JD → get everything
+- Pipeline returns: parsed resume, parsed JD, match scores, gap analysis, routing decision
+- 6 new workflow tests covering happy path, errors, and routing decisions
+- All tests passing
+
+**Blockers:** None
+
+**Next:** Day 20 — Retry logic, state visualization, graph error recovery
+
 ## Day 18 — 2025-06-18 (Phase 3: LangGraph Orchestration)
 
 **Completed:**
