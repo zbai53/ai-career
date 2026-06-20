@@ -5,6 +5,22 @@
 
 ---
 
+## Day 23 — 2025-06-19 (Phase 4: Rewrite Agent + Fidelity System)
+
+**Completed:**
+- Improved entity extraction: comprehensive regex for dates/metrics/numbers, 50+ tech terms list, fuzzy tech matching
+- Added severity classification: HIGH (fake company/title), MEDIUM (unverified metric/tech), LOW (safe rephrasing)
+- Case-insensitive and synonym-aware comparison (React.js == React == ReactJS)
+- Created fidelity evaluation baseline: 5 test cases with known expected results
+- Wired RewriteAgent into LangGraph workflow with rewrite loop (max 2 iterations)
+- Loop exit conditions: rewrite_count >= 2 OR re-match score >= 70 → route to interview
+- Added POST /api/rewrite endpoint
+- Documented evaluation results in docs/evaluation/fidelity-eval-v1.md
+
+**Blockers:** None
+
+**Next:** Day 24 — Fidelity checker refinement, retry with stricter prompts, threshold tuning
+
 ## Day 22 — 2025-06-18 (Phase 4: Rewrite Agent + Fidelity System)
 
 **Completed:**
