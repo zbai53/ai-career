@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
 from app.agents.match_agent import MatchAgent
+from app.agents.rewrite_agent import RewriteAgent
 from app.agents.resume_agent import UnsupportedFileTypeError, TextExtractionError, ResumeParseError
 from app.agents.jd_agent import JDFetchError, JDParseError
 from app.graph.workflow import (
@@ -293,6 +294,41 @@ async def match_resume_to_jd(body: MatchRequest):
         return {**result.model_dump(), "agent_run": agent_run}
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": f"Match failed: {exc}"})
+
+
+# ---------------------------------------------------------------------------
+# Rewrite — caller already has parsed resume + JD + match_result
+# ---------------------------------------------------------------------------
+
+class RewriteRequest(BaseModel):
+    resume: dict
+    jd: dict
+    match_result: dict
+
+
+@app.post("/api/rewrite")
+async def rewrite_resume(body: RewriteRequest):
+    """
+    Rewrite resume bullets to better match the JD.
+
+    Accepts already-parsed resume and JD dicts plus the match_result (from
+    POST /api/match).  Calls RewriteAgent directly — use POST /api/pipeline/run
+    for the one-shot upload flow.
+
+    Returns RewriteResult JSON including the embedded fidelity report.
+    """
+    try:
+        resume = ParsedResume.model_validate(body.resume)
+        jd     = ParsedJobDescription.model_validate(body.jd)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": f"Validation failed: {exc}"})
+
+    try:
+        agent = RewriteAgent()
+        result, agent_run = agent.rewrite(resume, jd, body.match_result)
+        return {**result.model_dump(), "agent_run": agent_run}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": f"Rewrite failed: {exc}"})
 
 
 # ---------------------------------------------------------------------------

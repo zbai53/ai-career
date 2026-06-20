@@ -20,11 +20,14 @@ import pytest
 
 from app.graph.state import JobHelperState
 from app.graph.workflow import (
+    _MAX_REWRITE_COUNT,
     after_match_router,
+    after_rewrite_router,
     get_workflow_state,
     match_node,
     parse_jd_node,
     parse_resume_node,
+    rewrite_node,
     run_full_pipeline,
     run_parse_jd,
     run_parse_resume,
@@ -46,6 +49,8 @@ def _base_state(**overrides) -> JobHelperState:
         "resume_raw_text":    None,
         "jd":                 None,
         "match_result":       None,
+        "rewrite_result":     None,
+        "rewrite_count":      0,
         "rewrite_history":    [],
         "interview_messages": [],
         "interview_review":   None,
@@ -1018,3 +1023,209 @@ class TestPipelineEndpoint:
         # Aggregate values: each fake run has duration_ms=100, token_count=50
         assert body["total_duration_ms"] == 300
         assert body["total_tokens"]      == 150
+
+
+# ---------------------------------------------------------------------------
+# rewrite_node unit tests
+# ---------------------------------------------------------------------------
+
+def _fake_rewrite_model() -> MagicMock:
+    """Fake RewriteResult returned by a mocked RewriteAgent.rewrite()."""
+    m = MagicMock()
+    m.model_dump.return_value = {
+        "experiences": [
+            {
+                "company": "Acme Corp",
+                "title": "Software Engineer",
+                "original_bullets": ["Built REST API"],
+                "rewritten_bullets": [
+                    {
+                        "original": "Built REST API",
+                        "rewritten": "Engineered scalable REST API using Python and FastAPI",
+                        "changes_made": ["Stronger verb", "Added FastAPI keyword"],
+                    }
+                ],
+            }
+        ],
+        "keywords_injected": ["FastAPI"],
+        "overall_improvement_summary": "Improved keyword coverage.",
+        "rewrite_confidence": 0.9,
+        "fidelity_report": {
+            "fidelity_score": 0.95,
+            "flags": [],
+            "total_original_entities": 5,
+            "total_rewritten_entities": 5,
+            "new_entities_found": 0,
+            "passed": True,
+            "threshold": 0.85,
+        },
+        "rewrite_attempts": 1,
+    }
+    return m
+
+
+def _state_with_resume_and_jd(match_score: float = 55.0, rewrite_count: int = 0) -> JobHelperState:
+    """Base state ready for rewrite_node with parsed resume, JD, and match_result."""
+    return _base_state(
+        resume=_fake_resume_model().model_dump(),
+        jd=_fake_jd_model().model_dump(),
+        match_result=_fake_match_model(match_score).model_dump(),
+        rewrite_count=rewrite_count,
+    )
+
+
+class TestRewriteNode:
+    def test_rewrite_node_updates_state(self) -> None:
+        """
+        rewrite_node must populate state['rewrite_result'], increment
+        rewrite_count, append agent_run, and set current_step='rewriting'.
+        """
+        state = _state_with_resume_and_jd()
+        rewrite_run = _fake_agent_run("rewrite_agent")
+
+        with patch("app.graph.workflow.RewriteAgent") as MockRewrite:
+            MockRewrite.return_value.rewrite.return_value = (
+                _fake_rewrite_model(), rewrite_run
+            )
+            result = rewrite_node(state)
+
+        assert result["current_step"] == "rewriting"
+        assert result["rewrite_result"] is not None
+        assert isinstance(result["rewrite_result"], dict)
+        assert result["rewrite_count"] == 1
+        assert rewrite_run in result["agent_runs"]
+        assert result.get("error") is None
+
+    def test_rewrite_node_returns_error_when_resume_missing(self) -> None:
+        state = _base_state(jd=_fake_jd_model().model_dump(), match_result={"overall_score": 55})
+        result = rewrite_node(state)
+        assert result["current_step"] == "error"
+        assert "resume" in result["error"]
+
+    def test_rewrite_node_returns_error_when_jd_missing(self) -> None:
+        state = _base_state(resume=_fake_resume_model().model_dump(), match_result={"overall_score": 55})
+        result = rewrite_node(state)
+        assert result["current_step"] == "error"
+        assert "jd" in result["error"]
+
+    def test_rewrite_node_returns_error_when_match_result_missing(self) -> None:
+        state = _base_state(
+            resume=_fake_resume_model().model_dump(),
+            jd=_fake_jd_model().model_dump(),
+        )
+        result = rewrite_node(state)
+        assert result["current_step"] == "error"
+        assert "match_result" in result["error"]
+
+    def test_rewrite_node_increments_rewrite_count(self) -> None:
+        """rewrite_count should accumulate across multiple calls."""
+        state = _state_with_resume_and_jd(rewrite_count=1)
+        rewrite_run = _fake_agent_run("rewrite_agent")
+
+        with patch("app.graph.workflow.RewriteAgent") as MockRewrite:
+            MockRewrite.return_value.rewrite.return_value = (
+                _fake_rewrite_model(), rewrite_run
+            )
+            result = rewrite_node(state)
+
+        assert result["rewrite_count"] == 2
+
+
+class TestAfterRewriteRouter:
+    def test_routes_to_match_when_count_below_max(self) -> None:
+        """After first rewrite (count=1, score<70) → re-score via match."""
+        state = _base_state(
+            match_result={"overall_score": 55.0},
+            rewrite_count=1,
+        )
+        assert after_rewrite_router(state) == "match"
+
+    def test_routes_to_interview_when_count_reaches_max(self) -> None:
+        """After _MAX_REWRITE_COUNT rewrites, must go to interview regardless of score."""
+        state = _base_state(
+            match_result={"overall_score": 40.0},
+            rewrite_count=_MAX_REWRITE_COUNT,
+        )
+        assert after_rewrite_router(state) == "interview"
+
+    def test_routes_to_error_handler_on_error(self) -> None:
+        state = _base_state(error="rewrite blew up", rewrite_count=1)
+        assert after_rewrite_router(state) == "error_handler"
+
+
+class TestRewriteLoopIntegration:
+    """Full-graph integration tests for the rewrite loop using run_workflow()."""
+
+    def test_rewrite_loop_max_2(self) -> None:
+        """
+        Score always < 70 → rewrite runs, loops back to match, reruns rewrite,
+        then after_rewrite_router caps at _MAX_REWRITE_COUNT=2 and exits to interview.
+        RewriteAgent.rewrite() must be called exactly 2 times.
+        """
+        tid = f"test-rewrite-max-{uuid.uuid4()}"
+        resume_run = _fake_agent_run("resume_agent")
+        jd_run     = _fake_agent_run("jd_agent")
+        match_run  = _fake_agent_run("match_agent")
+        rewrite_run = _fake_agent_run("rewrite_agent")
+
+        with patch("app.graph.workflow.ResumeAgent")  as MR, \
+             patch("app.graph.workflow.JDAgent")       as MJ, \
+             patch("app.graph.workflow.MatchAgent")    as MM, \
+             patch("app.graph.workflow.RewriteAgent")  as MW:
+
+            MR.return_value.parse.return_value   = (_fake_resume_model(), resume_run)
+            MJ.return_value.parse.return_value   = (_fake_jd_model(),     jd_run)
+            # Match always returns score=40 → always triggers rewrite
+            MM.return_value.match.return_value   = (_fake_match_model(40.0), match_run)
+            MW.return_value.rewrite.return_value = (_fake_rewrite_model(), rewrite_run)
+
+            final = run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/resume.pdf",
+                jd_text="We need a Python developer.",
+                thread_id=tid,
+            )
+
+        # Should have reached interview (not stayed in rewrite loop)
+        assert final.get("current_step") in {"interviewing", "reviewing", "done"}, (
+            f"Unexpected step: {final.get('current_step')}"
+        )
+        assert final.get("rewrite_count") == _MAX_REWRITE_COUNT
+        assert MW.return_value.rewrite.call_count == _MAX_REWRITE_COUNT
+
+    def test_rewrite_loop_exits_on_high_score(self) -> None:
+        """
+        First match: score=40 → rewrite. Second match: score=75 → interview.
+        RewriteAgent.rewrite() must be called exactly 1 time.
+        """
+        tid = f"test-rewrite-high-{uuid.uuid4()}"
+        resume_run  = _fake_agent_run("resume_agent")
+        jd_run      = _fake_agent_run("jd_agent")
+        match_run   = _fake_agent_run("match_agent")
+        rewrite_run = _fake_agent_run("rewrite_agent")
+
+        with patch("app.graph.workflow.ResumeAgent")  as MR, \
+             patch("app.graph.workflow.JDAgent")       as MJ, \
+             patch("app.graph.workflow.MatchAgent")    as MM, \
+             patch("app.graph.workflow.RewriteAgent")  as MW:
+
+            MR.return_value.parse.return_value   = (_fake_resume_model(), resume_run)
+            MJ.return_value.parse.return_value   = (_fake_jd_model(),     jd_run)
+            MM.return_value.match.side_effect    = [
+                (_fake_match_model(40.0), match_run),   # first call: low score → rewrite
+                (_fake_match_model(75.0), match_run),   # second call: high score → interview
+            ]
+            MW.return_value.rewrite.return_value = (_fake_rewrite_model(), rewrite_run)
+
+            final = run_workflow(
+                user_id="test-user",
+                resume_file_path="/fake/resume.pdf",
+                jd_text="We need a Python developer.",
+                thread_id=tid,
+            )
+
+        assert final.get("current_step") in {"interviewing", "reviewing", "done"}, (
+            f"Unexpected step: {final.get('current_step')}"
+        )
+        assert final.get("rewrite_count") == 1
+        assert MW.return_value.rewrite.call_count == 1

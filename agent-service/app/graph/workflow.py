@@ -34,6 +34,7 @@ from langgraph.graph import END, START, StateGraph
 from app.agents.jd_agent import JDAgent
 from app.agents.match_agent import MatchAgent
 from app.agents.resume_agent import ResumeAgent
+from app.agents.rewrite_agent import RewriteAgent
 from app.graph.state import JobHelperState
 from app.models.job_description import ParsedJobDescription
 from app.models.resume import ParsedResume
@@ -338,15 +339,70 @@ def match_node(state: JobHelperState) -> dict:
             }
 
 
+_MAX_REWRITE_COUNT = 2
+
+
 # =============================================================================
-# Placeholder nodes (Phase 4 / Phase 5)
+# Rewrite node (Phase 4)
 # =============================================================================
 
 def rewrite_node(state: JobHelperState) -> dict:
-    """Placeholder — RewriteAgent wired in Phase 4."""
-    updated_match = dict(state.get("match_result") or {})
-    updated_match["overall_score"] = 75  # simulate post-rewrite improvement
-    return {"current_step": "rewriting", "match_result": updated_match}
+    """
+    Call RewriteAgent to rewrite resume bullets to better match the JD.
+
+    Reads resume, jd, and match_result from state; reconstructs Pydantic models;
+    calls RewriteAgent.rewrite(); stores the result in state["rewrite_result"].
+    Increments rewrite_count so after_rewrite_router can enforce the loop cap.
+    """
+    if not state.get("resume"):
+        msg = "rewrite_node: resume is missing from state"
+        logger.error("[workflow] %s", msg)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("rewrite_agent", msg)],
+        }
+    if not state.get("jd"):
+        msg = "rewrite_node: jd is missing from state"
+        logger.error("[workflow] %s", msg)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("rewrite_agent", msg)],
+        }
+    if not state.get("match_result"):
+        msg = "rewrite_node: match_result is missing from state"
+        logger.error("[workflow] %s", msg)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("rewrite_agent", msg)],
+        }
+
+    try:
+        resume      = ParsedResume.model_validate(state["resume"])
+        jd          = ParsedJobDescription.model_validate(state["jd"])
+        match_result = state["match_result"]
+
+        agent = RewriteAgent()
+        rewrite_result, agent_run = agent.rewrite(resume, jd, match_result)
+
+        rewrite_count = state.get("rewrite_count", 0) + 1
+        return {
+            "current_step":   "rewriting",
+            "rewrite_result": rewrite_result.model_dump(),
+            "rewrite_count":  rewrite_count,
+            "agent_runs":     state.get("agent_runs", []) + [agent_run],
+            "error":          None,
+        }
+    except Exception as exc:
+        msg = f"rewrite_node failed: {exc}"
+        logger.error("[workflow] %s", msg, exc_info=True)
+        return {
+            "current_step": "error",
+            "error":        msg,
+            "agent_runs":   state.get("agent_runs", []) + [_failed_agent_run("rewrite_agent", msg)],
+        }
 
 
 def interview_node(state: JobHelperState) -> dict:
@@ -390,6 +446,9 @@ def after_match_router(state: JobHelperState) -> str:
       < 70  → rewrite  (improve the resume before practising interviews)
       >= 70 → interview (score strong enough, move to mock interview)
 
+    Also respects rewrite_count: if we have already rewritten the maximum number
+    of times, skip directly to interview regardless of score.
+
     The error guard below is never reached in the real graph (because _check_error
     intercepts errors before this function is called), but it preserves correct
     behaviour when after_match_router is called directly in tests.
@@ -397,8 +456,39 @@ def after_match_router(state: JobHelperState) -> str:
     if state.get("current_step") == "error":
         return END
 
+    if state.get("rewrite_count", 0) >= _MAX_REWRITE_COUNT:
+        return "interview"
+
     score = (state.get("match_result") or {}).get("overall_score", 0)
     return "rewrite" if score < 70 else "interview"
+
+
+def after_rewrite_router(state: JobHelperState) -> str:
+    """
+    Route after rewrite_node:
+      - error in state      → error_handler
+      - rewrite_count >= 2  → interview  (loop cap reached)
+      - re-match score >= 70 → interview
+      - otherwise           → match  (re-score the rewritten resume)
+
+    In the real graph the rewrite→match→after_match_router chain handles the
+    re-score loop. This router exits the loop early when the cap is reached or
+    the rewrite already produced a good enough result based on the *previous*
+    match score (avoids an extra Claude call when unnecessary).
+    """
+    if state.get("error"):
+        return "error_handler"
+
+    rewrite_count = state.get("rewrite_count", 0)
+    if rewrite_count >= _MAX_REWRITE_COUNT:
+        logger.info(
+            "[workflow] after_rewrite_router: rewrite_count=%d >= max=%d, routing to interview",
+            rewrite_count, _MAX_REWRITE_COUNT,
+        )
+        return "interview"
+
+    # Route back to match for re-scoring; after_match_router will pick the next step.
+    return "match"
 
 
 # =============================================================================
@@ -439,6 +529,8 @@ def _empty_state(user_id: str) -> JobHelperState:
         "resume_raw_text":    None,
         "jd":                 None,
         "match_result":       None,
+        "rewrite_result":     None,
+        "rewrite_count":      0,
         "rewrite_history":    [],
         "interview_messages": [],
         "interview_review":   None,
@@ -585,8 +677,12 @@ def _build_graph() -> StateGraph:
         {"rewrite": "rewrite", "interview": "interview"},
     )
 
-    # --- rewrite loops back to match ---
-    builder.add_edge("rewrite",       "match")
+    # --- rewrite: conditional exit from loop ---
+    builder.add_conditional_edges(
+        "rewrite",
+        after_rewrite_router,
+        {"match": "match", "interview": "interview", "error_handler": "error_handler"},
+    )
 
     # --- interview path ---
     builder.add_edge("interview",     "review")
@@ -639,6 +735,8 @@ def run_workflow(
         "resume_raw_text":    None,
         "jd":                 None,
         "match_result":       None,
+        "rewrite_result":     None,
+        "rewrite_count":      0,
         "rewrite_history":    [],
         "interview_messages": [],
         "interview_review":   None,
@@ -734,6 +832,8 @@ if __name__ == "__main__":
         "resume_raw_text":    demo_resume.raw_text,
         "jd":                 demo_jd.model_dump(),
         "match_result":       None,
+        "rewrite_result":     None,
+        "rewrite_count":      0,
         "rewrite_history":    [],
         "interview_messages": [],
         "interview_review":   None,

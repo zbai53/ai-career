@@ -244,25 +244,11 @@ class TestSeverityClassification(unittest.TestCase):
         for flag in company_flags:
             self.assertEqual(flag.severity, "high")
 
-    def test_technology_flag_is_low_severity(self):
-        """New technology in rewrite → severity='low'."""
+    def test_technology_flag_is_medium_severity(self):
+        """New technology in rewrite → severity='medium' (unverified tech claim)."""
         checker = _checker_no_claude()
 
-        mock_client = MagicMock()
-
-        def _entity_side_effect(model, max_tokens, system, messages):
-            text = messages[0]["content"]
-            resp = MagicMock()
-            resp.usage = MagicMock(input_tokens=50, output_tokens=20)
-            if "Kubernetes" in text:
-                resp.content = [MagicMock(text='{"companies":[],"job_titles":[],"technologies":["Kubernetes"]}')]
-            else:
-                resp.content = [MagicMock(text='{"companies":[],"job_titles":[],"technologies":["Python"]}')]
-            return resp
-
-        mock_client.messages.create.side_effect = _entity_side_effect
-        checker._client = mock_client
-
+        # Kubernetes is not in the original resume; rule-based will catch it
         resume = _make_resume(technologies=["Python"], skills=["Python"])
         rewrite = _make_rewrite(
             rewritten_bullets=["Deployed microservices using Kubernetes and Python"],
@@ -272,7 +258,7 @@ class TestSeverityClassification(unittest.TestCase):
         tech_flags = [f for f in report.flags if f.entity_type == "technology"]
         self.assertTrue(len(tech_flags) > 0, "Expected at least one technology flag")
         for flag in tech_flags:
-            self.assertEqual(flag.severity, "low")
+            self.assertEqual(flag.severity, "medium")
 
     def test_metric_flag_is_medium_severity(self):
         """New metric in rewrite → severity='medium'."""

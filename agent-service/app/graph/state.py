@@ -34,6 +34,14 @@ Lifecycle of each field:
       missing) and the interview node (to select relevant questions). None
       until matching runs.
 
+  rewrite_result
+      Most recent RewriteResult serialised to dict. Populated by rewrite_node.
+      None until a rewrite has run.
+
+  rewrite_count
+      Number of rewrite passes completed in this run. Starts at 0; capped at
+      2 by after_rewrite_router to prevent infinite rewrite loops.
+
   rewrite_history
       Each rewriting attempt appends one dict of the form:
           {"attempt": int, "rewritten_resume": dict, "fidelity_score": float,
@@ -136,6 +144,12 @@ class JobHelperState(TypedDict):
     # -------------------------------------------------------------------------
     match_result: Optional[dict]
     """MatchResult serialised to dict. Populated by the matching node."""
+
+    rewrite_result: Optional[dict]
+    """RewriteResult serialised to dict. Populated by the rewrite node. None until rewrite runs."""
+
+    rewrite_count: int
+    """Number of rewrite passes completed. Starts at 0; capped at 2 to prevent infinite loops."""
 
     rewrite_history: list[dict]
     """Accumulates one entry per rewriting attempt. Starts empty."""
