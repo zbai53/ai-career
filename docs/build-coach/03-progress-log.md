@@ -5,6 +5,44 @@
 
 ---
 
+## Day 22 — 2025-06-18 (Phase 4: Rewrite Agent + Fidelity System)
+
+**Completed:**
+- Implemented RewriteAgent: rewrites resume bullets to match JD, injects keywords, strengthens action verbs
+- Critical constraint: Claude cannot invent new experiences, companies, titles, or metrics
+- Implemented FidelityChecker with dual extraction: rule-based regex (dates, metrics, numbers) + Claude-assisted (companies, titles)
+- Fidelity scoring: flags any new entity not in original, calculates fidelity_score (0-1)
+- Auto-retry: if fidelity_score < 0.85, retries rewrite with stricter prompt listing flagged entities
+- Created Pydantic models: RewriteResult, RewrittenBullet, FidelityReport, FidelityFlag
+- Tests: rewrite output validation, keyword injection, fidelity pass/fail, hallucination flagging, retry logic
+
+**Blockers:** None
+
+**Next:** Day 23 — Design fidelity checking algorithm in detail, entity extraction improvements
+
+## Day 21 — 2025-06-18 (Phase 3: LangGraph Orchestration)
+
+**Completed:**
+- End-to-end integration tests: full pipeline, low/high score routing, API endpoint tests via TestClient
+- Verified backward compatibility: individual agent endpoints still work alongside workflow
+- Updated architecture-workflow.md with node descriptions, error handling, checkpoint docs
+- Updated API endpoints documentation with all Phase 3 additions
+- Marked Phase 3 complete in roadmap
+- All tests passing
+
+**Blockers:** None
+
+**Phase 3 Summary:**
+- LangGraph state machine orchestrating 3 agents (resume, JD, match) with conditional routing
+- Checkpoint persistence via MemorySaver (workflow can resume from any step)
+- Retry logic (2 retries per node) with degraded mode (scores without gap analysis)
+- Error handler node catches failures gracefully
+- One-click pipeline endpoint: upload resume + paste JD → full analysis
+- Mermaid workflow visualization (JSON + browser-renderable HTML)
+- Workflow state tracking: status, steps_completed, duration, tokens
+
+**Next:** Day 22 — Phase 4: Rewrite Agent + Fidelity System
+
 ## Day 20 — 2025-06-18 (Phase 3: LangGraph Orchestration)
 
 **Completed:**
