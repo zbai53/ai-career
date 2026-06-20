@@ -12,6 +12,8 @@ from .job_description import (
     ParsedJobDescription,
 )
 from .match_result import MatchResult
+from .rewrite_result import RewrittenBullet, RewrittenExperience, RewriteResult
+from .fidelity_report import FidelityFlag, FidelityReport
 
 __all__ = [
     "ResumeContact",
@@ -24,4 +26,9 @@ __all__ = [
     "JDSkillRequirement",
     "ParsedJobDescription",
     "MatchResult",
+    "RewrittenBullet",
+    "RewrittenExperience",
+    "RewriteResult",
+    "FidelityFlag",
+    "FidelityReport",
 ]
