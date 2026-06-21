@@ -5,6 +5,20 @@
 
 ---
 
+## Day 25 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
+
+**Completed:**
+- Expanded evaluation harness to 10 resume-JD pairs covering diverse scenarios (career transition, promotion, vague resume, metric preservation)
+- Improved rewrite prompt with explicit DO NOT / YOU MAY guardrails
+- Added self-check step: Claude verifies its own output before returning
+- Structured output format with fidelity_note per bullet
+- New tests: leadership fabrication prevention, metric preservation, self-check validation
+- Documented prompt iteration v2 and interview talking points
+
+**Blockers:** None
+
+**Next:** Day 26 — Try different Claude models, iterate on prompts, document findings
+
 ## Day 24 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
 
 **Completed:**
