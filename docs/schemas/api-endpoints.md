@@ -153,6 +153,127 @@ All component scores are on a 0–100 scale. See [match-eval-v1.md](../evaluatio
 
 ---
 
+### Rewrite
+
+#### `POST /api/rewrite`
+
+Rewrite resume bullet points to better match a job description.  Accepts
+already-parsed resume and JD objects plus the match result from `POST /api/match`.
+For the one-shot upload flow, use `POST /api/pipeline/run` instead.
+
+**Request** — `application/json`
+
+```json
+{
+  "resume":       { /* ParsedResume object */ },
+  "jd":           { /* ParsedJobDescription object */ },
+  "match_result": { /* MatchResult object from POST /api/match */ }
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `resume` | object | yes | Full `ParsedResume` JSON (see [resume-schema.md](resume-schema.md)) |
+| `jd` | object | yes | Full `ParsedJobDescription` JSON (see [jd-schema.md](jd-schema.md)) |
+| `match_result` | object | yes | Full match result including `gap_analysis` (from `POST /api/match`) |
+
+**Response 200**
+
+```json
+{
+  "experiences": [
+    {
+      "company": "Initech",
+      "title": "Backend Developer",
+      "original_bullets": [
+        "Built REST API using Java",
+        "Maintained PostgreSQL database"
+      ],
+      "rewritten_bullets": [
+        {
+          "original": "Built REST API using Java",
+          "rewritten": "Engineered RESTful APIs in Java to support distributed service communication.",
+          "changes_made": [
+            "Replaced weak verb 'Built' with 'Engineered'",
+            "Added 'distributed service' framing to align with JD microservices context"
+          ]
+        },
+        {
+          "original": "Maintained PostgreSQL database",
+          "rewritten": "Owned PostgreSQL database layer ensuring high availability and query performance.",
+          "changes_made": [
+            "Replaced passive 'Maintained' with ownership framing",
+            "Added JD keyword 'high availability'"
+          ]
+        }
+      ]
+    }
+  ],
+  "keywords_injected": ["distributed", "high availability"],
+  "overall_improvement_summary": "Reframed two bullets to better target the Senior Backend Engineer role by highlighting architectural context and ownership language. Fidelity checks passed on first attempt.",
+  "rewrite_confidence": 0.88,
+  "fidelity_report": {
+    "fidelity_score": 1.0,
+    "passed": true,
+    "flags": []
+  },
+  "rewrite_attempts": 1,
+  "improvement_metrics": {
+    "keywords_added": ["distributed", "high availability"],
+    "keywords_removed": [],
+    "avg_bullet_length_change": 0.32,
+    "action_verbs_improved": 2
+  },
+  "fidelity_status": "passed",
+  "agent_run": {
+    "agent_name": "rewrite_agent",
+    "input_summary": "resume skills=3, jd=Senior Backend Engineer",
+    "output_summary": "1 experience rewritten, fidelity=passed, attempts=1",
+    "status": "success",
+    "duration_ms": 2340,
+    "token_count": 1120,
+    "model_name": "claude-haiku-4-5-20251001",
+    "error_message": null,
+    "created_at": "2026-06-21T10:45:12.000000+00:00"
+  }
+}
+```
+
+**Response fields**
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `experiences` | array | One entry per resume experience; same order as input resume |
+| `experiences[].rewritten_bullets` | array | One `RewrittenBullet` per original bullet, in the same order |
+| `keywords_injected` | array | JD keywords successfully injected (present in rewrites, absent from originals) |
+| `rewrite_confidence` | float | Model confidence 0.0–1.0 that the rewrite improves match without fabrication |
+| `fidelity_report.fidelity_score` | float | 0.0 (full hallucination) → 1.0 (perfectly faithful) |
+| `fidelity_report.passed` | boolean | `true` if `fidelity_score >= 0.90` (STRICT threshold) |
+| `fidelity_report.flags` | array | Flagged entities by severity: `"high"` (company/title/date), `"medium"` (tech/metric), `"low"` (contextual) |
+| `fidelity_status` | string | `"passed"` ≥ 0.90 · `"warning"` ≥ 0.80 · `"failed"` < 0.80 |
+| `rewrite_attempts` | int | `1` = passed first try · `2` = fidelity retry triggered |
+| `improvement_metrics.action_verbs_improved` | int | Count of weak verbs replaced with stronger equivalents |
+
+**Fidelity guardrails**
+
+The agent uses a two-layer fidelity system:
+
+1. **Prompt constraints** — The system prompt explicitly prohibits adding technologies,
+   metrics, leadership claims, or credentials not present in the original resume.
+2. **Post-hoc verification** — `FidelityChecker` extracts named entities from both
+   the original and rewritten bullets and flags any new entity.  If `fidelity_score < 0.80`
+   (WARN threshold), the agent retries once with the flagged entities listed explicitly
+   in the retry prompt.
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 400 | `resume` or `jd` fails Pydantic validation | `{"error": "Validation failed: <detail>"}` |
+| 500 | Rewrite or fidelity check failure | `{"error": "Rewrite failed: <detail>"}` |
+
+---
+
 ### Pipeline
 
 #### `POST /api/pipeline/run`
@@ -532,6 +653,7 @@ Agent Service :8001  ◄──────────────────�
   ├── POST /api/resume/parse          (multipart, forwarded bytes)
   ├── POST /api/jd/parse              (JSON, text or url)
   ├── POST /api/match                 (JSON: resume + jd objects)
+  ├── POST /api/rewrite               (JSON: resume + jd + match_result)
   ├── POST /api/pipeline/run          (multipart: file + jd_text)
   ├── POST /api/workflow/run          (JSON: file path + jd text)
   ├── GET  /api/workflow/status/{id}  (checkpoint poll, read-only)

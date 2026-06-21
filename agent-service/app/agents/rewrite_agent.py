@@ -7,6 +7,11 @@ import time
 import anthropic
 
 from app.agents.fidelity_checker import FidelityChecker
+from app.agents.prompt_templates import (
+    REWRITE_RETRY_PROMPT,
+    REWRITE_SYSTEM_PROMPT,
+    REWRITE_USER_PROMPT,
+)
 from app.models.fidelity_report import FidelityFlag, FidelityReport
 from app.models.job_description import ParsedJobDescription
 from app.models.resume import ParsedResume
@@ -59,82 +64,24 @@ _WEAK_VERBS: frozenset[str] = frozenset({
 })
 
 # ---------------------------------------------------------------------------
-# Prompt templates
+# Prompt aliases — imported from prompt_templates; kept here for backward
+# compatibility so external importers (e.g. run_model_comparison.py) that
+# reference _SYSTEM_PROMPT or _build_user_prompt continue to work unchanged.
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """\
-You are an expert resume writer and career coach. Your task is to rewrite resume \
-bullet points to better match a specific job description.
-
-━━━ DO NOT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• DO NOT add technologies the candidate hasn't used. Only mention tools, \
-languages, or frameworks that appear in the original bullet or the experience \
-entry's technology list.
-• DO NOT fabricate metrics (percentages, dollar amounts, user counts, time \
-savings). If a number isn't in the original, do not invent one.
-• DO NOT change company names, job titles, or dates. Copy them exactly.
-• DO NOT claim leadership roles (led, managed, directed, oversaw) unless the \
-original bullet explicitly mentions leadership or management responsibility.
-• DO NOT add certifications, degrees, or awards that are not stated in the \
-original resume.
-
-━━━ YOU MAY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• YOU MAY rephrase passive language into active voice \
-("was responsible for" → "owned and delivered").
-• YOU MAY reorder the emphasis within a bullet to lead with the strongest claim.
-• YOU MAY add context that is reasonably implied by the original \
-(e.g. "Wrote SQL queries" → "Authored complex SQL queries for business \
-intelligence reporting").
-• YOU MAY swap weak action verbs for stronger equivalents \
-(Built → Engineered, Made → Developed, Helped → Contributed).
-• YOU MAY highlight transferable skills that genuinely connect the \
-candidate's background to the target JD.
-
-━━━ SELF-CHECK (before returning) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-For each rewritten bullet, ask: can every factual claim — company name, \
-technology, metric, job title — be found in the original resume? \
-If any claim cannot be traced, remove it before responding.
-
-━━━ ADDITIONAL RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-• Inject relevant JD keywords naturally — the bullet must still read as \
-authentic human writing, not keyword stuffing.
-• Keep each bullet to one sentence, ideally under 25 words.
-
-━━━ OUTPUT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-Return ONLY a valid JSON object — no prose, no markdown fences:
-
-{
-  "rewritten_bullets": [
-    {
-      "original": "<exact original text>",
-      "rewritten": "<improved text>",
-      "changes_made": ["<change 1 and why>", "<change 2 and why>"],
-      "fidelity_note": "<'all claims traceable to original' OR 'added reasonable inference: {what}'>"
-    }
-  ],
-  "keywords_injected": ["<keyword1>", "<keyword2>"],
-  "confidence": 0.0
-}
-
-"confidence" is a float 0.0–1.0 rating how well the rewrite improves the \
-match without fabricating anything.\
-"""
+_SYSTEM_PROMPT = REWRITE_SYSTEM_PROMPT   # backward-compat alias
 
 
 def _format_flags_for_retry(flags: list[FidelityFlag]) -> str:
     """
-    Build a structured fidelity-violation block for the retry prompt.
-    Groups flags by severity, includes entity type and exact text.
+    Build a structured fidelity-violation block for the retry prompt using
+    REWRITE_RETRY_PROMPT from prompt_templates.  Groups flags by severity.
     """
     high   = [f for f in flags if f.severity == "high"]
     medium = [f for f in flags if f.severity == "medium"]
     low    = [f for f in flags if f.severity == "low"]
 
-    lines: list[str] = [
-        "FIDELITY VIOLATIONS DETECTED — the previous rewrite introduced claims that",
-        "cannot be traced to the original resume. Correct these before responding.",
-        "",
-    ]
+    lines: list[str] = []
 
     if high:
         lines.append("HIGH SEVERITY — MUST be removed (company names, job titles, dates):")
@@ -158,11 +105,7 @@ def _format_flags_for_retry(flags: list[FidelityFlag]) -> str:
             lines.append(f'  • [{f.entity_type}] "{f.entity}"')
         lines.append("")
 
-    lines += [
-        "Return the corrected version.",
-        "Do not add any new information not present in the original resume.",
-    ]
-    return "\n".join(lines)
+    return REWRITE_RETRY_PROMPT.format(flagged_entities="\n".join(lines))
 
 
 def _build_user_prompt(
@@ -184,24 +127,20 @@ def _build_user_prompt(
         else "- Focus on relevant keywords and strong action verbs."
     )
 
-    prompt = (
-        f"EXPERIENCE ENTRY TO REWRITE:\n"
-        f"  Company: {company}\n"
-        f"  Title: {title}\n"
-        f"\nORIGINAL BULLETS:\n{bullets_text}\n"
-        f"\nTARGET JOB: {jd_title}\n"
-        f"\nMISSING SKILLS TO ADDRESS (if present in this role): {missing_text}\n"
-        f"\nJD KEYWORDS TO INJECT NATURALLY: {keywords_text}\n"
-        f"\nIMPROVEMENT SUGGESTIONS FROM MATCH ANALYSIS:\n{suggestions_text}\n"
+    prompt = REWRITE_USER_PROMPT.format(
+        company=company,
+        title=title,
+        bullets=bullets_text,
+        jd_title=jd_title,
+        missing_skills=missing_text,
+        jd_keywords=keywords_text,
+        suggestions=suggestions_text,
+        n_bullets=len(bullets),
     )
 
     if fidelity_flags:
         prompt += "\n\n" + _format_flags_for_retry(fidelity_flags)
 
-    prompt += (
-        f"\nRewrite the {len(bullets)} bullets above. Return exactly {len(bullets)} "
-        f"objects in rewritten_bullets, in the same order."
-    )
     return prompt
 
 

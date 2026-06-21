@@ -10,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 from pydantic import ValidationError
 
+from app.agents.prompt_templates import JD_PARSE_SYSTEM_PROMPT, JD_PARSE_USER_PROMPT
 from app.models.job_description import ParsedJobDescription
 from app.utils.agent_logger import log_agent_run
 
@@ -19,36 +20,9 @@ _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 4096
 _MIN_JD_CHARS = 20
 
+# JSON schema embedded once at import time and injected into JD_PARSE_SYSTEM_PROMPT
 _JD_SCHEMA = json.dumps(ParsedJobDescription.model_json_schema(), indent=2)
-
-_SYSTEM_PROMPT = f"""\
-You are an expert job description parser. Given the raw text of a job posting, \
-extract all information and return ONLY a single valid JSON object that matches \
-the schema below — no prose, no markdown fences, no extra keys.
-
-SCHEMA:
-{_JD_SCHEMA}
-
-RULES:
-1. Return only the JSON object, nothing else.
-2. For each skill, set is_required to true if the posting uses language like \
-   "required", "must have", "you will need", or "minimum qualifications". \
-   Set is_required to false for "preferred", "nice to have", "bonus", or \
-   "desired" qualifications.
-3. Extract keywords: ATS-relevant terms including technologies, methodologies, \
-   domain vocabulary, and role-specific phrases that a recruiter's system would \
-   scan for. Include both required and preferred skill names.
-4. salary_min and salary_max must be integers (annual, in salary_currency units). \
-   Omit (null) if not stated.
-5. remote_type must be one of: "remote", "hybrid", "onsite", or null if unclear.
-6. employment_type must be one of: "full-time", "part-time", "contract", "intern", \
-   or null if unclear.
-7. Set parse_confidence to a float between 0.0 and 1.0: 0.9–1.0 for clean, \
-   complete postings; 0.6–0.9 for postings with some ambiguity or missing sections; \
-   below 0.6 for sparse or poorly structured postings.
-8. raw_text: include only the first 500 characters of the input followed by \
-   '...[truncated]'. Do NOT include the full text.\
-"""
+_SYSTEM_PROMPT = JD_PARSE_SYSTEM_PROMPT.format(schema=_JD_SCHEMA)
 
 _RETRY_SUFFIX = """
 
@@ -222,7 +196,7 @@ class JDAgent:
     # ------------------------------------------------------------------
 
     def _call_claude(self, raw_text: str, strict: bool) -> ParsedJobDescription:
-        user_content = f"Parse the following job description:\n\n{raw_text}"
+        user_content = JD_PARSE_USER_PROMPT.format(jd_text=raw_text)
         if strict:
             user_content += _RETRY_SUFFIX
 

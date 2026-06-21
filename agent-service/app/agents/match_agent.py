@@ -8,6 +8,7 @@ from datetime import date
 import anthropic
 from pydantic import ValidationError
 
+from app.agents.prompt_templates import GAP_ANALYSIS_PROMPT
 from app.models.job_description import JDSkillRequirement, ParsedJobDescription
 from app.models.match_result import MatchResult
 from app.models.resume import ParsedResume, ResumeExperience
@@ -480,29 +481,8 @@ _GAP_ANALYSIS_SCHEMA = json.dumps(
     indent=2,
 )
 
-_GAP_SYSTEM_PROMPT = f"""\
-You are a senior technical recruiter and career coach. You will be given:
-1. A candidate's parsed resume (JSON)
-2. A parsed job description (JSON)
-3. Pre-computed match scores
-
-Your task: return ONLY a single valid JSON object matching the schema below.
-No prose, no markdown fences, no extra keys.
-
-SCHEMA:
-{_GAP_ANALYSIS_SCHEMA}
-
-RULES:
-- missing_required_skills / missing_preferred_skills: list only skills that are
-  genuinely absent from the resume, using the exact skill names from the JD.
-- improvement_suggestions: 3-5 specific, actionable suggestions for how the
-  candidate can rewrite or augment their resume bullets to better target this JD.
-  Focus on language, keyword injection, and quantification — not fabrication.
-- interview_focus_areas: 3-5 topics the candidate should study or practise given
-  the gap between their background and this role.
-- overall_assessment: 2-3 sentences summarising the match quality, the strongest
-  alignment, and the most critical gap.\
-"""
+# Rendered once at import time; schema is static so this is safe to pre-format.
+_GAP_SYSTEM_PROMPT = GAP_ANALYSIS_PROMPT.format(schema=_GAP_ANALYSIS_SCHEMA)
 
 
 class MatchParseError(Exception):

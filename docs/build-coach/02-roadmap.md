@@ -94,9 +94,8 @@
 - [x] **Day 22:** Implement Rewrite Agent (basic): take resume + gap analysis → rewrite bullet points to better match JD. Inject missing keywords. Preserve factual content.
 - [x] **Day 23:** ⭐ Design the fidelity checking algorithm: (1) extract all factual entities from original resume (companies, titles, years, technologies, metrics), (2) extract entities from rewritten resume, (3) flag any new entity not present in original.
 - [x] **Day 24:** Implement fidelity checker as a separate validation step. If fidelity score < threshold, retry rewrite with stricter prompt. Log all flagged entities.
-- [ ] **Day 25:** Build evaluation harness: prepare 10 resume-JD pairs with manually written "ideal rewrites." Run baseline (no fidelity check) vs with fidelity check. Compute metrics: keyword coverage improvement, fidelity score, false positive rate.
-- [ ] **Day 26:** Iterate on prompts. Try different Claude models (Haiku for speed, Sonnet for quality). Document findings in `docs/evaluation/rewrite-eval.md`.
-- [ ] **Day 27:** Integrate into LangGraph flow. Spring Boot endpoint: `POST /api/rewrite`. Buffer day.
+- [x] **Day 25:** Build evaluation harness: prepare 10 resume-JD pairs with manually written "ideal rewrites." Run baseline (no fidelity check) vs with fidelity check. Compute metrics: keyword coverage improvement, fidelity score, false positive rate.
+- [x] **Day 26:** Iterate on prompts. Try different Claude models (Haiku for speed, Sonnet for quality). Document findings in `docs/evaluation/rewrite-eval-v1.md` and `docs/evaluation/prompt-iterations.md`.
 
 **Understand before moving on:**
 - What is "hallucination" in the context of resume rewriting? Why is it dangerous?

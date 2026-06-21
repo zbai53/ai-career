@@ -10,6 +10,7 @@ import pdfplumber
 from docx import Document
 from pydantic import ValidationError
 
+from app.agents.prompt_templates import RESUME_PARSE_SYSTEM_PROMPT, RESUME_PARSE_USER_PROMPT
 from app.models.resume import ParsedResume
 from app.utils.agent_logger import log_agent_run
 
@@ -20,33 +21,9 @@ _MAX_TOKENS = 8192
 _MIN_TEXT_CHARS = 50       # below this → scanned/image PDF
 _MAX_TEXT_CHARS = 15_000   # truncate before sending to Claude
 
-# JSON schema embedded once at import time so the prompt stays lean
+# JSON schema embedded once at import time and injected into RESUME_PARSE_SYSTEM_PROMPT
 _RESUME_SCHEMA = json.dumps(ParsedResume.model_json_schema(), indent=2)
-
-_SYSTEM_PROMPT = f"""\
-You are an expert resume parser. Given the raw text of a resume, extract all \
-information and return ONLY a single valid JSON object that matches the schema \
-below — no prose, no markdown fences, no extra keys.
-
-SCHEMA:
-{_RESUME_SCHEMA}
-
-RULES:
-1. Return only the JSON object, nothing else.
-2. Dates must be in YYYY-MM format. If only a year is given use YYYY-01. \
-   If the end date is "Present" / "Current", set end_date to null and \
-   is_current to true.
-3. If a section is absent from the resume, use an empty list [] or null as \
-   appropriate per the schema.
-4. When a candidate held multiple roles at the same company, emit a separate \
-   experience entry for each role.
-5. Set parse_confidence to a float between 0.0 and 1.0 that reflects how \
-   completely the resume could be extracted: 0.9–1.0 for clean, complete \
-   resumes; 0.6–0.9 for resumes with some ambiguity; below 0.6 for heavily \
-   formatted or sparse documents.
-6. For the raw_text field, include only the first 500 characters of the original \
-   text followed by '...[truncated]'. Do NOT include the full raw text.\
-"""
+_SYSTEM_PROMPT = RESUME_PARSE_SYSTEM_PROMPT.format(schema=_RESUME_SCHEMA)
 
 _RETRY_SUFFIX = """
 
@@ -215,7 +192,7 @@ class ResumeAgent:
     # ------------------------------------------------------------------
 
     def _call_claude(self, raw_text: str, strict: bool) -> ParsedResume:
-        user_content = f"Parse the following resume:\n\n{raw_text}"
+        user_content = RESUME_PARSE_USER_PROMPT.format(resume_text=raw_text)
         if strict:
             user_content += _RETRY_SUFFIX
 
