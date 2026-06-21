@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import MagicMock, patch
 
 from app.agents.fidelity_checker import FidelityChecker
-from app.agents.rewrite_agent import RewriteAgent
+from app.agents.rewrite_agent import RewriteAgent, compare_versions
 from app.models.fidelity_report import FidelityReport
 from app.models.job_description import JDSkillRequirement, ParsedJobDescription
 from app.models.resume import (
@@ -401,6 +401,160 @@ class TestRewriteRetryOnLowFidelity(unittest.TestCase):
 
         self.assertEqual(result.rewrite_attempts, 2)
         self.assertEqual(mock_checker.check.call_count, 2)
+
+
+class TestRewriteDoesNotAddLeadership(unittest.TestCase):
+    def test_rewrite_does_not_add_leadership(self):
+        """Original 'Wrote code' — rewrite must not contain 'Led team' or 'Managed'."""
+        bullet = "Wrote code for backend services"
+        resume = ParsedResume(
+            contact=ResumeContact(name="Jane Doe", email="jane@example.com"),
+            experience=[
+                ResumeExperience(
+                    company="Acme Corp",
+                    title="Software Engineer",
+                    start_date="2021-01",
+                    end_date="2023-06",
+                    bullets=[bullet],
+                    technologies=["Python"],
+                )
+            ],
+            skills=[ResumeSkill(name="Python", category="language")],
+            raw_text="Wrote code for backend services.",
+            parse_confidence=0.9,
+        )
+
+        agent, _ = _make_agent_with_mock_claude(
+            [_claude_rewrite_response([bullet])]
+        )
+        result, _ = agent.rewrite(resume, _make_jd(), _make_match_result())
+
+        for exp in result.experiences:
+            for rb in exp.rewritten_bullets:
+                text = rb.rewritten.lower()
+                self.assertNotIn("led team", text)
+                self.assertNotIn("managed", text)
+
+
+class TestRewritePreservesExistingMetrics(unittest.TestCase):
+    def test_rewrite_preserves_existing_metrics(self):
+        """'40%' from original bullet must appear in the rewritten bullet."""
+        bullet = "Reduced latency by 40%"
+        resume = ParsedResume(
+            contact=ResumeContact(name="Jane Doe", email="jane@example.com"),
+            experience=[
+                ResumeExperience(
+                    company="Acme Corp",
+                    title="Software Engineer",
+                    start_date="2021-01",
+                    end_date="2023-06",
+                    bullets=[bullet],
+                    technologies=["Python", "Redis"],
+                )
+            ],
+            skills=[ResumeSkill(name="Python", category="language")],
+            raw_text="Reduced latency by 40%.",
+            parse_confidence=0.9,
+        )
+
+        payload = {
+            "rewritten_bullets": [
+                {
+                    "original": bullet,
+                    "rewritten": "Optimized backend caching to reduce latency by 40% via Redis",
+                    "changes_made": ["Strengthened action verb", "Added implementation detail"],
+                }
+            ],
+            "keywords_injected": ["REST API"],
+            "confidence": 0.90,
+        }
+        mock_resp = MagicMock()
+        mock_resp.content = [MagicMock(text=json.dumps(payload))]
+        mock_resp.usage = MagicMock(input_tokens=200, output_tokens=150)
+
+        agent, _ = _make_agent_with_mock_claude([mock_resp])
+        result, _ = agent.rewrite(resume, _make_jd(), _make_match_result())
+
+        rewritten_text = result.experiences[0].rewritten_bullets[0].rewritten
+        self.assertIn("40%", rewritten_text)
+
+
+class TestRewriteSelfCheckCatchesFabrication(unittest.TestCase):
+    def test_rewrite_self_check_catches_fabrication(self):
+        """
+        First Claude response contains a fabricated company.
+        Fidelity checker catches it (attempt 1 fails); retry removes it (attempt 2 passes).
+        """
+        resume = _make_resume()
+        bullets = resume.experience[0].bullets
+
+        # Attempt 1: rewrite injects a fake company name
+        fake_payload = {
+            "rewritten_bullets": [
+                {
+                    "original": b,
+                    "rewritten": f"Delivered results at FakeCorpXYZ: {b}",
+                    "changes_made": ["Added company context"],
+                }
+                for b in bullets
+            ],
+            "keywords_injected": ["microservices"],
+            "confidence": 0.75,
+        }
+        mock_resp_1 = MagicMock()
+        mock_resp_1.content = [MagicMock(text=json.dumps(fake_payload))]
+        mock_resp_1.usage = MagicMock(input_tokens=200, output_tokens=150)
+
+        # Attempt 2: clean rewrite without fabrication
+        mock_resp_2 = _claude_rewrite_response(bullets)
+
+        mock_client = MagicMock()
+        mock_client.messages.create.side_effect = [mock_resp_1, mock_resp_2]
+
+        mock_checker = MagicMock(spec=FidelityChecker)
+        mock_checker.threshold = 0.85
+        mock_checker.check.side_effect = [
+            _failing_fidelity_report("FakeCorpXYZ"),  # attempt 1 flagged
+            _passing_fidelity_report(),               # attempt 2 clean
+        ]
+
+        with patch("anthropic.Anthropic", return_value=mock_client), \
+             patch.dict("os.environ", {"ANTHROPIC_API_KEY": "test-key"}):
+            agent = RewriteAgent(fidelity_checker=mock_checker)
+            agent._client = mock_client
+
+        result, _ = agent.rewrite(resume, _make_jd(), _make_match_result())
+
+        self.assertEqual(result.rewrite_attempts, 2)
+        self.assertTrue(result.fidelity_report.passed)
+        for exp in result.experiences:
+            for rb in exp.rewritten_bullets:
+                self.assertNotIn("FakeCorpXYZ", rb.rewritten)
+
+
+class TestCompareVersionsMetrics(unittest.TestCase):
+    def test_compare_versions_metrics(self):
+        """compare_versions correctly counts keywords_added and action_verbs_improved."""
+        original_bullets = [
+            "Worked on backend services using Python",
+            "Helped with database migrations",
+        ]
+        rewritten_bullets = [
+            "Engineered scalable backend services using Python with microservices architecture",
+            "Executed database migrations with REST API integrations to reduce downtime",
+        ]
+        jd_keywords = ["microservices", "REST API", "CI/CD"]
+
+        metrics = compare_versions(original_bullets, rewritten_bullets, jd_keywords)
+
+        # "microservices" and "rest api" absent from originals, present in rewrites
+        self.assertIn("microservices", metrics.keywords_added)
+        self.assertIn("rest api", metrics.keywords_added)
+        # "ci/cd" not in either — must not appear as added
+        self.assertNotIn("ci/cd", metrics.keywords_added)
+
+        # "worked" and "helped" are weak verbs replaced by strong ones → 2 improvements
+        self.assertEqual(metrics.action_verbs_improved, 2)
 
 
 if __name__ == "__main__":

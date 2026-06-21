@@ -66,35 +66,58 @@ _SYSTEM_PROMPT = """\
 You are an expert resume writer and career coach. Your task is to rewrite resume \
 bullet points to better match a specific job description.
 
-RULES — read carefully before responding:
-1. Do NOT invent new experiences, technologies, companies, titles, dates, or metrics \
-   that are not in the original. You may rephrase, reorganize, and emphasize \
-   differently, but all factual claims must be traceable to the original bullet.
-2. Inject relevant JD keywords naturally — the bullet must still read as authentic \
-   human writing, not keyword stuffing.
-3. Quantify achievements where possible using numbers/percentages already present \
-   in the original or reasonably implied (e.g. "several" → keep as is; do not add \
-   "50%" if no number was given).
-4. Use strong, specific action verbs (Led, Architected, Reduced, Deployed, …).
-5. Highlight transferable skills that connect the candidate's background to the JD.
-6. Keep each bullet to one sentence, ideally under 25 words.
+━━━ DO NOT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• DO NOT add technologies the candidate hasn't used. Only mention tools, \
+languages, or frameworks that appear in the original bullet or the experience \
+entry's technology list.
+• DO NOT fabricate metrics (percentages, dollar amounts, user counts, time \
+savings). If a number isn't in the original, do not invent one.
+• DO NOT change company names, job titles, or dates. Copy them exactly.
+• DO NOT claim leadership roles (led, managed, directed, oversaw) unless the \
+original bullet explicitly mentions leadership or management responsibility.
+• DO NOT add certifications, degrees, or awards that are not stated in the \
+original resume.
 
-Return ONLY a valid JSON object with this schema — no prose, no markdown fences:
+━━━ YOU MAY ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• YOU MAY rephrase passive language into active voice \
+("was responsible for" → "owned and delivered").
+• YOU MAY reorder the emphasis within a bullet to lead with the strongest claim.
+• YOU MAY add context that is reasonably implied by the original \
+(e.g. "Wrote SQL queries" → "Authored complex SQL queries for business \
+intelligence reporting").
+• YOU MAY swap weak action verbs for stronger equivalents \
+(Built → Engineered, Made → Developed, Helped → Contributed).
+• YOU MAY highlight transferable skills that genuinely connect the \
+candidate's background to the target JD.
+
+━━━ SELF-CHECK (before returning) ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+For each rewritten bullet, ask: can every factual claim — company name, \
+technology, metric, job title — be found in the original resume? \
+If any claim cannot be traced, remove it before responding.
+
+━━━ ADDITIONAL RULES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+• Inject relevant JD keywords naturally — the bullet must still read as \
+authentic human writing, not keyword stuffing.
+• Keep each bullet to one sentence, ideally under 25 words.
+
+━━━ OUTPUT FORMAT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Return ONLY a valid JSON object — no prose, no markdown fences:
 
 {
   "rewritten_bullets": [
     {
       "original": "<exact original text>",
       "rewritten": "<improved text>",
-      "changes_made": ["<change 1 and why>", "<change 2 and why>"]
+      "changes_made": ["<change 1 and why>", "<change 2 and why>"],
+      "fidelity_note": "<'all claims traceable to original' OR 'added reasonable inference: {what}'>"
     }
   ],
   "keywords_injected": ["<keyword1>", "<keyword2>"],
   "confidence": 0.0
 }
 
-"confidence" is a float 0.0–1.0 rating how well the rewrite improves the match \
-without fabricating anything.\
+"confidence" is a float 0.0–1.0 rating how well the rewrite improves the \
+match without fabricating anything.\
 """
 
 
@@ -472,14 +495,19 @@ class RewriteAgent:
                 fidelity_flags=fidelity_flags,
             )
 
-            rewritten_bullets = [
-                RewrittenBullet(
-                    original=item.get("original", orig),
-                    rewritten=item.get("rewritten", orig),
-                    changes_made=item.get("changes_made", []),
+            rewritten_bullets = []
+            for item, orig in zip(result["rewritten_bullets"], exp.bullets):
+                changes = list(item.get("changes_made", []))
+                fidelity_note = item.get("fidelity_note", "")
+                if fidelity_note:
+                    changes.append(f"[fidelity] {fidelity_note}")
+                rewritten_bullets.append(
+                    RewrittenBullet(
+                        original=item.get("original", orig),
+                        rewritten=item.get("rewritten", orig),
+                        changes_made=changes,
+                    )
                 )
-                for item, orig in zip(result["rewritten_bullets"], exp.bullets)
-            ]
 
             rewritten_experiences.append(
                 RewrittenExperience(
