@@ -9,6 +9,30 @@ from pydantic import BaseModel, Field
 from app.models.fidelity_report import FidelityReport  # noqa: F401
 
 
+class ImprovementMetrics(BaseModel):
+    keywords_added: list[str] = Field(
+        default_factory=list,
+        description="JD keywords that appear in the rewrite but were absent from the original bullets",
+    )
+    keywords_removed: list[str] = Field(
+        default_factory=list,
+        description="Words present in the original bullets that no longer appear in any rewritten bullet",
+    )
+    avg_bullet_length_change: float = Field(
+        default=0.0,
+        description=(
+            "Percentage change in average bullet length: "
+            "positive = longer, negative = shorter. "
+            "e.g. 0.15 means 15% longer on average."
+        ),
+    )
+    action_verbs_improved: int = Field(
+        default=0,
+        description="Count of weak action verbs from the original replaced with stronger verbs in the rewrite",
+        ge=0,
+    )
+
+
 class RewrittenBullet(BaseModel):
     original: str = Field(description="The original bullet point text")
     rewritten: str = Field(description="The rewritten bullet point text")
@@ -56,4 +80,16 @@ class RewriteResult(BaseModel):
         default=1,
         description="Number of rewrite attempts made (1 = first pass passed; 2 = fidelity retry)",
         ge=1,
+    )
+    improvement_metrics: Optional[ImprovementMetrics] = Field(
+        default=None,
+        description="Quality metrics comparing original vs rewritten bullets; None if not computed",
+    )
+    fidelity_status: str = Field(
+        default="unknown",
+        description=(
+            "'passed' — score >= STRICT threshold; "
+            "'warning' — score >= WARN but < STRICT; "
+            "'failed' — score < WARN"
+        ),
     )

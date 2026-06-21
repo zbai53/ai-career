@@ -47,4 +47,16 @@ public class AgentServiceConfig {
         factory.setReadTimeout(120_000);
         return new RestTemplate(factory);
     }
+
+    /**
+     * RestTemplate with a 90-second read timeout for rewrite calls that include
+     * a Claude rewrite pass plus fidelity checking (and a possible retry).
+     */
+    @Bean("rewriteRestTemplate")
+    public RestTemplate rewriteRestTemplate() {
+        SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(10_000);
+        factory.setReadTimeout(90_000);
+        return new RestTemplate(factory);
+    }
 }

@@ -12,7 +12,7 @@ from .job_description import (
     ParsedJobDescription,
 )
 from .match_result import MatchResult
-from .rewrite_result import RewrittenBullet, RewrittenExperience, RewriteResult
+from .rewrite_result import RewrittenBullet, RewrittenExperience, RewriteResult, ImprovementMetrics
 from .fidelity_report import FidelityFlag, FidelityReport
 
 __all__ = [
@@ -29,6 +29,7 @@ __all__ = [
     "RewrittenBullet",
     "RewrittenExperience",
     "RewriteResult",
+    "ImprovementMetrics",
     "FidelityFlag",
     "FidelityReport",
 ]

@@ -1,15 +1,21 @@
 import json
 import logging
 import os
+import re
 import time
 
 import anthropic
 
 from app.agents.fidelity_checker import FidelityChecker
-from app.models.fidelity_report import FidelityReport
+from app.models.fidelity_report import FidelityFlag, FidelityReport
 from app.models.job_description import ParsedJobDescription
 from app.models.resume import ParsedResume
-from app.models.rewrite_result import RewriteResult, RewrittenBullet, RewrittenExperience
+from app.models.rewrite_result import (
+    ImprovementMetrics,
+    RewriteResult,
+    RewrittenBullet,
+    RewrittenExperience,
+)
 from app.utils.agent_logger import log_agent_run
 
 logger = logging.getLogger(__name__)
@@ -17,6 +23,40 @@ logger = logging.getLogger(__name__)
 _MODEL = "claude-haiku-4-5-20251001"
 _MAX_TOKENS = 4096
 _MAX_REWRITE_ATTEMPTS = 2
+
+# ---------------------------------------------------------------------------
+# Configurable fidelity thresholds
+# ---------------------------------------------------------------------------
+
+FIDELITY_THRESHOLD_STRICT = 0.90   # clean pass — no warnings
+FIDELITY_THRESHOLD_WARN   = 0.80   # pass with warnings — borderline
+# score < FIDELITY_THRESHOLD_WARN  → failed, must retry
+
+# ---------------------------------------------------------------------------
+# Weak action verbs — replacing any of these with a stronger verb is tracked
+# as an improvement by compare_versions()
+# ---------------------------------------------------------------------------
+
+_WEAK_VERBS: frozenset[str] = frozenset({
+    "did", "done", "does",
+    "had", "has", "have",
+    "made", "make", "makes",
+    "got", "get", "gets",
+    "helped", "help", "helps",
+    "involved", "involve", "involves",
+    "worked", "work", "works",
+    "assisted", "assist", "assists",
+    "used", "use", "uses",
+    "handled", "handle", "handles",
+    "responsible", "tasked",
+    "participated", "participate",
+    "supported", "support",
+    "contributed", "contribute",
+    "provided", "provide",
+    "performed", "perform",
+    "completed", "complete",
+    "conducted", "conduct",
+})
 
 # ---------------------------------------------------------------------------
 # Prompt templates
@@ -58,6 +98,50 @@ without fabricating anything.\
 """
 
 
+def _format_flags_for_retry(flags: list[FidelityFlag]) -> str:
+    """
+    Build a structured fidelity-violation block for the retry prompt.
+    Groups flags by severity, includes entity type and exact text.
+    """
+    high   = [f for f in flags if f.severity == "high"]
+    medium = [f for f in flags if f.severity == "medium"]
+    low    = [f for f in flags if f.severity == "low"]
+
+    lines: list[str] = [
+        "FIDELITY VIOLATIONS DETECTED — the previous rewrite introduced claims that",
+        "cannot be traced to the original resume. Correct these before responding.",
+        "",
+    ]
+
+    if high:
+        lines.append("HIGH SEVERITY — MUST be removed (company names, job titles, dates):")
+        for f in high:
+            lines.append(f'  • [{f.entity_type}] "{f.entity}" — not in original resume')
+        lines.append("")
+
+    if medium:
+        lines.append(
+            "MEDIUM SEVERITY — remove or verify (technology claims, unverified metrics):"
+        )
+        for f in medium:
+            lines.append(
+                f'  • [{f.entity_type}] "{f.entity}" — cannot be confirmed from original'
+            )
+        lines.append("")
+
+    if low:
+        lines.append("LOW SEVERITY — review for accuracy (contextual additions):")
+        for f in low:
+            lines.append(f'  • [{f.entity_type}] "{f.entity}"')
+        lines.append("")
+
+    lines += [
+        "Return the corrected version.",
+        "Do not add any new information not present in the original resume.",
+    ]
+    return "\n".join(lines)
+
+
 def _build_user_prompt(
     company: str,
     title: str,
@@ -66,7 +150,7 @@ def _build_user_prompt(
     missing_skills: list[str],
     jd_keywords: list[str],
     improvement_suggestions: list[str],
-    flagged_entities: list[str] | None = None,
+    fidelity_flags: list[FidelityFlag] | None = None,
 ) -> str:
     bullets_text = "\n".join(f"- {b}" for b in bullets)
     missing_text = ", ".join(missing_skills) if missing_skills else "none identified"
@@ -88,21 +172,112 @@ def _build_user_prompt(
         f"\nIMPROVEMENT SUGGESTIONS FROM MATCH ANALYSIS:\n{suggestions_text}\n"
     )
 
-    if flagged_entities:
-        entities_text = ", ".join(f'"{e}"' for e in flagged_entities)
-        prompt += (
-            f"\n\nFIDELITY VIOLATION — REMOVE THESE FABRICATED CLAIMS:\n"
-            f"The previous rewrite introduced the following entities that do NOT appear "
-            f"in the original resume: {entities_text}.\n"
-            f"Remove these fabricated claims entirely. Every fact in the rewrite must "
-            f"be directly traceable to the original bullets above.\n"
-        )
+    if fidelity_flags:
+        prompt += "\n\n" + _format_flags_for_retry(fidelity_flags)
 
     prompt += (
         f"\nRewrite the {len(bullets)} bullets above. Return exactly {len(bullets)} "
         f"objects in rewritten_bullets, in the same order."
     )
     return prompt
+
+
+def _fidelity_status(score: float) -> str:
+    """Map a fidelity score to a status string."""
+    if score >= FIDELITY_THRESHOLD_STRICT:
+        return "passed"
+    if score >= FIDELITY_THRESHOLD_WARN:
+        return "warning"
+    return "failed"
+
+
+def _should_retry(score: float) -> bool:
+    """Return True when fidelity is poor enough to warrant a retry."""
+    return score < FIDELITY_THRESHOLD_WARN
+
+
+# ---------------------------------------------------------------------------
+# compare_versions — quality metrics (no Claude call)
+# ---------------------------------------------------------------------------
+
+def _first_word(text: str) -> str:
+    """Return the first alphabetic word of a bullet, lower-cased."""
+    m = re.match(r"[^a-zA-Z]*([a-zA-Z]+)", text)
+    return m.group(1).lower() if m else ""
+
+
+def compare_versions(
+    original_bullets: list[str],
+    rewritten_bullets: list[str],
+    jd_keywords: list[str] | None = None,
+) -> ImprovementMetrics:
+    """
+    Compare original and rewritten bullet lists and return quality metrics.
+
+    Args:
+        original_bullets:  Flat list of original bullet strings.
+        rewritten_bullets: Flat list of rewritten bullet strings (same length).
+        jd_keywords:       Optional list of JD keywords to track injection.
+
+    Returns:
+        ImprovementMetrics with:
+          keywords_added            — JD keywords new in the rewrite
+          keywords_removed          — words that vanished from the bullets
+          avg_bullet_length_change  — fractional change in mean character count
+          action_verbs_improved     — count of weak→strong verb swaps
+    """
+    jd_kw_lower = {k.lower() for k in (jd_keywords or [])}
+
+    orig_text_lower = " ".join(original_bullets).lower()
+    rw_text_lower   = " ".join(rewritten_bullets).lower()
+
+    # Keywords added: JD keywords absent from originals but present in rewrites
+    keywords_added = [
+        kw for kw in sorted(jd_kw_lower)
+        if kw not in orig_text_lower and kw in rw_text_lower
+    ]
+
+    # Keywords removed: words in originals that disappeared from rewrites
+    orig_words  = {w for w in re.findall(r"\b[a-z]{4,}\b", orig_text_lower)}
+    rw_words    = {w for w in re.findall(r"\b[a-z]{4,}\b", rw_text_lower)}
+    # Only flag words that were in the originals but not in rewrites AND
+    # are not stop-words (filter by length >= 5 to keep it meaningful)
+    removed = sorted(
+        w for w in (orig_words - rw_words)
+        if len(w) >= 5
+        and w not in _WEAK_VERBS
+        and w not in {"which", "where", "their", "there", "these", "those",
+                       "about", "above", "after", "again", "being", "between",
+                       "could", "every", "other", "since", "still", "under",
+                       "until", "while", "would"}
+    )
+    keywords_removed = removed[:20]  # cap to avoid noise
+
+    # Avg bullet length change
+    pairs = list(zip(original_bullets, rewritten_bullets))
+    if pairs:
+        orig_avg = sum(len(o) for o, _ in pairs) / len(pairs)
+        rw_avg   = sum(len(r) for _, r in pairs) / len(pairs)
+        length_change = (rw_avg - orig_avg) / orig_avg if orig_avg > 0 else 0.0
+    else:
+        length_change = 0.0
+
+    # Action verb improvements: count pairs where original started with a weak verb
+    # and the rewrite starts with a different (non-weak) verb
+    verbs_improved = sum(
+        1
+        for orig, rw in pairs
+        if _first_word(orig) in _WEAK_VERBS
+        and _first_word(rw) not in _WEAK_VERBS
+        and _first_word(rw) != ""
+    )
+
+    return ImprovementMetrics(
+        keywords_added=keywords_added,
+        keywords_removed=keywords_removed,
+        avg_bullet_length_change=round(length_change, 4),
+        action_verbs_improved=verbs_improved,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -134,9 +309,13 @@ class RewriteAgent:
         match_result: dict,
     ) -> tuple[RewriteResult, dict]:
         """
-        Rewrite resume bullets to better match the JD, then fidelity-check the
-        result. If fidelity_score < threshold, retry once with a stricter prompt
-        that names every flagged entity. Maximum _MAX_REWRITE_ATTEMPTS attempts.
+        Rewrite resume bullets to better match the JD, fidelity-check the result,
+        and compute quality improvement metrics.
+
+        Retry policy (up to _MAX_REWRITE_ATTEMPTS):
+          score < FIDELITY_THRESHOLD_WARN (0.80)   → retry with flag details in prompt
+          WARN <= score < STRICT (0.90)             → pass with "warning" status
+          score >= STRICT                           → pass clean
 
         Returns:
             (RewriteResult, agent_run_log)
@@ -154,8 +333,8 @@ class RewriteAgent:
 
         rewrite_result: RewriteResult | None = None
         fidelity_report: FidelityReport | None = None
+        retry_flags: list[FidelityFlag] | None = None
         attempts = 0
-        flagged_entities: list[str] | None = None
 
         for attempt in range(1, _MAX_REWRITE_ATTEMPTS + 1):
             attempts = attempt
@@ -166,27 +345,47 @@ class RewriteAgent:
                 missing_skills=missing_skills,
                 improvement_suggestions=improvement_suggestions,
                 jd_keywords=jd_keywords,
-                flagged_entities=flagged_entities,
+                fidelity_flags=retry_flags,
             )
 
             fidelity_report = self._fidelity_checker.check(resume, rewrite_result)
+            status = _fidelity_status(fidelity_report.fidelity_score)
             logger.info(
-                "Fidelity check (attempt %d/%d): score=%.3f passed=%s",
+                "Fidelity check (attempt %d/%d): score=%.3f status=%s",
                 attempt, _MAX_REWRITE_ATTEMPTS,
-                fidelity_report.fidelity_score, fidelity_report.passed,
+                fidelity_report.fidelity_score, status,
             )
 
-            if fidelity_report.passed:
-                break
+            if not _should_retry(fidelity_report.fidelity_score):
+                break   # passed or warning — stop here
 
             if attempt < _MAX_REWRITE_ATTEMPTS:
-                flagged_entities = [f.entity for f in fidelity_report.flags]
+                retry_flags = fidelity_report.flags
                 logger.warning(
-                    "Fidelity failed (score=%.3f) — retrying with %d flagged entities removed",
-                    fidelity_report.fidelity_score, len(flagged_entities),
+                    "Fidelity failed (score=%.3f < warn=%.2f) — "
+                    "retrying with %d flagged entities",
+                    fidelity_report.fidelity_score,
+                    FIDELITY_THRESHOLD_WARN,
+                    len(retry_flags),
                 )
 
-        # Attach fidelity report and attempt count to the final result
+        # Compute improvement metrics across all experience bullets
+        orig_all  = [
+            b
+            for exp in resume.experience
+            for b in exp.bullets
+        ]
+        rw_all = [
+            rb.rewritten
+            for exp in rewrite_result.experiences
+            for rb in exp.rewritten_bullets
+        ]
+        improvement_metrics = compare_versions(orig_all, rw_all, jd_keywords)
+
+        # Assemble final result
+        final_status = _fidelity_status(
+            fidelity_report.fidelity_score if fidelity_report else 0.0
+        )
         rewrite_result = RewriteResult(
             experiences=rewrite_result.experiences,
             keywords_injected=rewrite_result.keywords_injected,
@@ -194,17 +393,21 @@ class RewriteAgent:
             rewrite_confidence=rewrite_result.rewrite_confidence,
             fidelity_report=fidelity_report,
             rewrite_attempts=attempts,
+            improvement_metrics=improvement_metrics,
+            fidelity_status=final_status,
         )
 
         duration_ms = int((time.perf_counter() - t0) * 1000)
         logger.info(
-            "Rewrite completed in %d ms — %d experiences, %d keywords, attempts=%d, "
-            "fidelity=%.3f",
+            "Rewrite completed in %d ms — %d experiences, %d keywords, "
+            "attempts=%d, fidelity=%.3f (%s), verbs_improved=%d",
             duration_ms,
             len(rewrite_result.experiences),
             len(rewrite_result.keywords_injected),
             attempts,
             fidelity_report.fidelity_score if fidelity_report else 0.0,
+            final_status,
+            improvement_metrics.action_verbs_improved,
         )
 
         agent_run = log_agent_run(
@@ -216,7 +419,8 @@ class RewriteAgent:
             output_summary=(
                 f"experiences_rewritten={len(rewrite_result.experiences)}, "
                 f"keywords_injected={len(rewrite_result.keywords_injected)}, "
-                f"fidelity={(fidelity_report.fidelity_score if fidelity_report else 0.0):.3f}, "
+                f"fidelity={(fidelity_report.fidelity_score if fidelity_report else 0.0):.3f}"
+                f"({final_status}), "
                 f"attempts={attempts}"
             ),
             status="success",
@@ -238,7 +442,7 @@ class RewriteAgent:
         missing_skills: list[str],
         improvement_suggestions: list[str],
         jd_keywords: list[str],
-        flagged_entities: list[str] | None,
+        fidelity_flags: list[FidelityFlag] | None,
     ) -> RewriteResult:
         """Execute one full rewrite pass over all experience entries."""
         rewritten_experiences: list[RewrittenExperience] = []
@@ -265,7 +469,7 @@ class RewriteAgent:
                 missing_skills=missing_skills,
                 jd_keywords=jd_keywords,
                 improvement_suggestions=improvement_suggestions,
-                flagged_entities=flagged_entities,
+                fidelity_flags=fidelity_flags,
             )
 
             rewritten_bullets = [
@@ -314,7 +518,7 @@ class RewriteAgent:
         missing_skills: list[str],
         jd_keywords: list[str],
         improvement_suggestions: list[str],
-        flagged_entities: list[str] | None = None,
+        fidelity_flags: list[FidelityFlag] | None = None,
     ) -> dict:
         """
         Call Claude to rewrite bullets for a single experience entry.
@@ -328,7 +532,7 @@ class RewriteAgent:
             missing_skills=missing_skills,
             jd_keywords=jd_keywords,
             improvement_suggestions=improvement_suggestions,
-            flagged_entities=flagged_entities,
+            fidelity_flags=fidelity_flags,
         )
 
         for attempt, strict in enumerate([False, True]):

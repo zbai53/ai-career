@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="com.aicareer.mapper.RewriteResultMapper">
+
+    <resultMap id="rewriteResultMap" type="com.aicareer.model.entity.RewriteResultEntity">
+        <id     column="id"               property="id"/>
+        <result column="user_id"          property="userId"/>
+        <result column="resume_id"        property="resumeId"/>
+        <result column="jd_id"            property="jdId"/>
+        <result column="match_result_id"  property="matchResultId"/>
+        <result column="rewrite_data"     property="rewriteData"/>
+        <result column="fidelity_score"   property="fidelityScore"/>
+        <result column="rewrite_attempts" property="rewriteAttempts"/>
+        <result column="fidelity_status"  property="fidelityStatus"/>
+        <result column="created_at"       property="createdAt"/>
+    </resultMap>
+
+    <insert id="insert" parameterType="com.aicareer.model.entity.RewriteResultEntity"
+            useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO rewrite_results
+            (user_id, resume_id, jd_id, match_result_id,
+             rewrite_data, fidelity_score, rewrite_attempts, fidelity_status)
+        VALUES
+            (#{userId}, #{resumeId}, #{jdId}, #{matchResultId},
+             #{rewriteData}::jsonb, #{fidelityScore}, #{rewriteAttempts}, #{fidelityStatus})
+    </insert>
+
+    <select id="findById" parameterType="long" resultMap="rewriteResultMap">
+        SELECT id, user_id, resume_id, jd_id, match_result_id,
+               rewrite_data::text AS rewrite_data,
+               fidelity_score, rewrite_attempts, fidelity_status, created_at
+        FROM rewrite_results
+        WHERE id = #{id}
+    </select>
+
+    <select id="findByResumeIdAndJdId" resultMap="rewriteResultMap">
+        SELECT id, user_id, resume_id, jd_id, match_result_id,
+               rewrite_data::text AS rewrite_data,
+               fidelity_score, rewrite_attempts, fidelity_status, created_at
+        FROM rewrite_results
+        WHERE resume_id = #{resumeId}
+          AND jd_id     = #{jdId}
+        ORDER BY created_at DESC
+    </select>
+
+</mapper>

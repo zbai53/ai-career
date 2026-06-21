@@ -24,6 +24,7 @@ public class AgentServiceClient {
     private final RestTemplate restTemplate;
     private final RestTemplate agentRestTemplate;
     private final RestTemplate workflowRestTemplate;
+    private final RestTemplate rewriteRestTemplate;
     private final String agentServiceUrl;
     private final ObjectMapper objectMapper;
 
@@ -31,11 +32,13 @@ public class AgentServiceClient {
             RestTemplate restTemplate,
             @Qualifier("agentRestTemplate") RestTemplate agentRestTemplate,
             @Qualifier("workflowRestTemplate") RestTemplate workflowRestTemplate,
+            @Qualifier("rewriteRestTemplate") RestTemplate rewriteRestTemplate,
             AgentServiceConfig agentServiceConfig,
             ObjectMapper objectMapper) {
         this.restTemplate = restTemplate;
         this.agentRestTemplate = agentRestTemplate;
         this.workflowRestTemplate = workflowRestTemplate;
+        this.rewriteRestTemplate = rewriteRestTemplate;
         this.agentServiceUrl = agentServiceConfig.getAgentServiceUrl();
         this.objectMapper = objectMapper;
     }
@@ -243,6 +246,61 @@ public class AgentServiceClient {
         } catch (HttpClientErrorException | HttpServerErrorException e) {
             throw new RuntimeException(
                     "Workflow status request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
+        }
+    }
+
+    /**
+     * Sends a parsed resume, job description, and match result to the agent-service
+     * rewrite endpoint and returns the raw JSON rewrite result.
+     *
+     * <p>The rewrite pass includes a fidelity check and may trigger a second Claude
+     * call on retry, so a 90-second read timeout is used.
+     *
+     * @param resumeJson      parsedData JSON string from the resumes table
+     * @param jdJson          parsedData JSON string from the job_descriptions table
+     * @param matchResultJson gap_analysis JSON string from the match_results table
+     * @return JSON string representing the RewriteResult (including fidelity_report)
+     * @throws RuntimeException on connection failure, timeout, or non-2xx response
+     */
+    public String rewriteResume(String resumeJson, String jdJson, String matchResultJson) {
+        String endpoint = agentServiceUrl + "/api/rewrite";
+
+        JsonNode resumeNode;
+        JsonNode jdNode;
+        JsonNode matchResultNode;
+        try {
+            resumeNode      = objectMapper.readTree(resumeJson);
+            jdNode          = objectMapper.readTree(jdJson);
+            matchResultNode = objectMapper.readTree(matchResultJson);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException(
+                    "Failed to parse stored JSON before sending to agent-service: " + e.getMessage(), e);
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("resume",       resumeNode);
+        body.put("jd",           jdNode);
+        body.put("match_result", matchResultNode);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+        try {
+            ResponseEntity<String> response = rewriteRestTemplate.postForEntity(endpoint, request, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException(
+                        "Rewrite failed with status " + response.getStatusCode()
+                                + ": " + response.getBody());
+            }
+            return response.getBody();
+        } catch (ResourceAccessException e) {
+            throw new RuntimeException(
+                    "Could not reach agent-service at " + endpoint + " (connection/timeout): " + e.getMessage(), e);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            throw new RuntimeException(
+                    "Rewrite request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
         }
     }
 
