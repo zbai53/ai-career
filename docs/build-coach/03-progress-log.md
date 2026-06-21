@@ -5,6 +5,19 @@
 
 ---
 
+## Day 26 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
+
+**Completed:**
+- Created model comparison evaluation: minimal vs full vs chain-of-thought prompts across 3 pairs
+- Centralized all prompt templates into prompt_templates.py (versioned, easy to iterate)
+- Updated all 4 agents to import prompts from central location
+- Documented prompt iteration history and model comparison findings
+- Updated API docs and roadmap
+
+**Blockers:** None
+
+**Next:** Day 27 — Integrate rewrite into LangGraph flow, Spring Boot endpoint, Phase 4 wrap-up
+
 ## Day 25 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
 
 **Completed:**
@@ -18,6 +31,7 @@
 **Blockers:** None
 
 **Next:** Day 26 — Try different Claude models, iterate on prompts, document findings
+
 
 ## Day 24 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
 
