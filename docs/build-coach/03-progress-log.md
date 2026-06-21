@@ -5,6 +5,21 @@
 
 ---
 
+## Day 24 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
+
+**Completed:**
+- Refined fidelity thresholds: STRICT (0.90), WARN (0.80) with tiered pass/warn/fail
+- Stricter retry prompt: includes flagged entities by name and severity, instructs removal
+- Added compare_versions() for rewrite quality metrics: keywords added/removed, verb improvements, length changes
+- Created rewrite evaluation harness: 3 resume-JD pairs, baseline vs fidelity-checked comparison
+- Documented results in docs/evaluation/rewrite-eval-v1.md
+- Created Spring Boot RewriteController: POST /api/rewrite (resumeId, jdId, matchResultId)
+- Full chain verified: Spring Boot → Python rewrite → fidelity check → response
+
+**Blockers:** None
+
+**Next:** Day 25 — Build evaluation harness with 10 resume-JD pairs, compute improvement metrics
+
 ## Day 23 — 2025-06-19 (Phase 4: Rewrite Agent + Fidelity System)
 
 **Completed:**
