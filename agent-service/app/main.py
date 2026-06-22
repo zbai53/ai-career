@@ -491,6 +491,57 @@ async def workflow_status(thread_id: str):
 
 
 # ---------------------------------------------------------------------------
+# RAG — interview question index and search
+# ---------------------------------------------------------------------------
+
+class RagSearchRequest(BaseModel):
+    query: str
+    role: Optional[str] = None
+    type: Optional[str] = None
+    difficulty: Optional[str] = None
+    limit: Optional[int] = 5
+
+
+@app.post("/api/rag/index")
+async def rag_index():
+    """
+    (Re-)index the built-in interview question bank into Qdrant.
+
+    Idempotent — safe to call multiple times.  Returns the number of questions
+    indexed.
+    """
+    try:
+        from app.rag.question_index import index_questions
+        count = index_questions()
+        return {"status": "ok", "count": count}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": f"Indexing failed: {exc}"})
+
+
+@app.post("/api/rag/search")
+async def rag_search(body: RagSearchRequest):
+    """
+    Semantic search over the interview question bank.
+
+    Optionally filter by role ("backend" | "frontend" | "general"),
+    type ("behavioral" | "technical"), or difficulty ("easy" | "medium" | "hard").
+    Returns a ranked list of matching questions with similarity scores.
+    """
+    try:
+        from app.rag.question_index import search_questions
+        results = search_questions(
+            query=body.query,
+            role=body.role,
+            type=body.type,
+            difficulty=body.difficulty,
+            limit=body.limit or 5,
+        )
+        return results
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": f"Search failed: {exc}"})
+
+
+# ---------------------------------------------------------------------------
 # Agent-run passthrough
 # ---------------------------------------------------------------------------
 
