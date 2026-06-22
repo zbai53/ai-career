@@ -5,6 +5,21 @@
 
 ---
 
+## Day 28 — 2025-06-21 (Phase 5: Interview + Coach Agents + RAG)
+
+**Completed:**
+- Created EmbeddingService using all-MiniLM-L6-v2 (384-dim vectors) with lazy loading
+- Created QdrantVectorStore with create/upsert/search/delete operations
+- Built 200+ interview question bank: 80+ behavioral (STAR format) + 120+ technical (backend, frontend, system design, DSA)
+- Indexed all questions into Qdrant with metadata (category, role, type, difficulty, topics)
+- Semantic search: query → embed → Qdrant similarity search with optional filters
+- Added FastAPI endpoints: POST /api/rag/index, POST /api/rag/search
+- RAG tests with Qdrant integration
+
+**Blockers:** None
+
+**Next:** Day 29 — Embed questions, implement Interview Agent with RAG retrieval
+
 ## Day 27 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
 
 **Completed:**
