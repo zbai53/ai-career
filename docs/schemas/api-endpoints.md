@@ -582,6 +582,114 @@ Retrieve a previously computed match result by its database ID.
 
 ---
 
+### Workflow (Spring Boot orchestrated)
+
+These endpoints implement the same match → rewrite flow as Python's `POST /api/pipeline/run`,
+but with Spring Boot controlling the persistence order and providing retrieval by ID.
+Use this path when you need direct DB control; use `POST /api/pipeline/run` for the
+single-call browser-friendly upload flow.
+
+#### `POST /api/workflow/full`
+
+Spring Boot-orchestrated full workflow: load resume and JD from DB, call Python match,
+conditionally call Python rewrite, persist both results, return combined response.
+
+**Request** — `application/json`
+
+```json
+{
+  "resumeId": 1,
+  "jdId":     2
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `resumeId` | Long | yes | ID of a previously parsed resume |
+| `jdId` | Long | yes | ID of a previously parsed job description |
+
+**Flow**
+
+1. Load resume and JD from `resumes` / `job_descriptions` tables.
+2. Call Python `POST /api/match` → persist to `match_results`.
+3. If `overall_score < 70` → call Python `POST /api/rewrite` → persist to `rewrite_results`.
+4. Persist all `agent_run` entries from both calls.
+5. Return combined response.
+
+**Response 200**
+
+```json
+{
+  "match_result_id":   7,
+  "overall_score":     58.4,
+  "skill_score":       52.0,
+  "experience_score":  60.0,
+  "keyword_score":     65.0,
+  "gap_analysis":      { /* full MatchResult JSON from Python */ },
+  "rewrite_triggered": true,
+  "rewrite_result_id": 3,
+  "rewrite_attempts":  1,
+  "fidelity_score":    0.95,
+  "fidelity_status":   "passed",
+  "fidelity_report":   { "fidelity_score": 0.95, "passed": true, "flags": [] },
+  "rewrite_result":    { /* full RewriteResult JSON from Python */ }
+}
+```
+
+When `overall_score >= 70` the rewrite fields are absent and `rewrite_triggered` is `false`.
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | Resume or JD not found | (empty 404 body) |
+| 500 | Match or rewrite agent failure | `{"error": "Full workflow failed: <message>"}` |
+
+---
+
+#### `GET /api/workflow/full/{matchResultId}`
+
+Retrieve a previously saved full workflow result by its `match_result` ID.
+Includes the most recent rewrite result for the same resume+JD pair, if one exists.
+
+**Path parameter**
+
+| Parameter | Type | Notes |
+|-----------|------|-------|
+| `matchResultId` | Long | ID returned from `POST /api/workflow/full` or `POST /api/match` |
+
+**Response 200**
+
+```json
+{
+  "match_result_id":   7,
+  "resume_id":         1,
+  "jd_id":             2,
+  "overall_score":     58.4,
+  "skill_score":       52.0,
+  "experience_score":  60.0,
+  "keyword_score":     65.0,
+  "created_at":        "2026-06-21T10:45:12",
+  "gap_analysis":      { /* MatchResult JSON */ },
+  "rewrite_triggered": true,
+  "rewrite_result_id": 3,
+  "rewrite_attempts":  1,
+  "fidelity_score":    0.95,
+  "fidelity_status":   "passed",
+  "fidelity_report":   { "fidelity_score": 0.95, "passed": true, "flags": [] },
+  "rewrite_result":    { /* RewriteResult JSON */ }
+}
+```
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | No match result with that ID | (empty 404 body) |
+| 500 | JSON parse failure on stored data | `{"error": "Failed to retrieve workflow result: <message>"}` |
+
+---
+
 ### Agent Runs
 
 #### `GET /api/agent-runs/recent`
@@ -643,6 +751,8 @@ Main Service :8080
   │  POST /api/jds/parse          (JSON)                         │
   │  POST /api/match              (JSON: resumeId + jdId)  ──────┤
   │  POST /api/workflow/run       (JSON: resumeId + jdId)  ──────┤
+  │  POST /api/workflow/full      (JSON: resumeId + jdId)  ──────┤
+  │  GET  /api/workflow/full/{id} (DB + agent-service calls) ────┤
   │  GET  /api/workflow/status/{threadId}  ──────────────────────┤
   │  GET  /api/match/{id}         (DB lookup, no agent call)     │
   │  GET  /api/agent-runs/recent  (DB lookup, no agent call)     │

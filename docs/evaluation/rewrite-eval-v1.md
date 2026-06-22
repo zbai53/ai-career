@@ -261,6 +261,45 @@ The eval runs two modes side-by-side: a "baseline" where fidelity checking is by
 
 ---
 
+## Phase 4 Final Results
+
+### Key metrics (10-pair evaluation, checked mode)
+
+| Metric | Value |
+|--------|-------|
+| Average fidelity score | **0.977** |
+| Rewrites passing fidelity on first attempt | **30%** (3/10 pairs) |
+| Average keyword coverage improvement | **+33pp** |
+| Most common hallucination type | **Technology names** (7/13 baseline flags) → then metrics (3/13) → then companies/titles (3/13) |
+
+**Interpretation:** The fidelity checker reduced fabricated entities from 13 (baseline) to 1 (checked), a **92% reduction**. The single remaining flag in checked mode is a confirmed false positive — the model correctly referenced a technology that was in the candidate's skills section but not in the specific bullet being rewritten.
+
+---
+
+## Interview Talking Points
+
+### 1. What hallucination means in resume rewriting — and why it's dangerous
+
+In general LLM usage, hallucination means the model invents facts. In resume rewriting the same problem takes a specific, high-stakes form: the model might add technologies the candidate hasn't used, invent quantified metrics ("reduced latency by 40%"), or claim leadership roles that aren't in the original. Unlike a hallucinated summary in a chatbot, a fabricated resume claim is a lie a candidate presents to a recruiter. If discovered — during a phone screen, technical interview, or reference check — it can end the process immediately and damage the candidate's reputation. The fidelity system exists specifically to prevent the tool from creating this liability.
+
+### 2. How entity extraction works: rule-based + LLM two-layer approach
+
+The `FidelityChecker` runs two extraction passes on both the original and rewritten text. The **rule-based layer** uses a canonical technology dictionary (`_TECH_CANONICAL`) with ~100 normalized tech names (Python, FastAPI, PostgreSQL, …) and scans for substring matches. It also runs a regex for metric patterns (`\d+%`, `\$\d+`, `\d+[kKmM]`) and a whitelist for common leadership verbs. The **LLM layer** calls Claude with a minimal entity-extraction prompt to catch company names and job titles — entities that are too varied for a static dictionary. The two layers are complementary: the rule-based pass handles the high-volume, predictable tech/metric cases cheaply; the LLM pass handles the long-tail of proper nouns that rules can't enumerate.
+
+### 3. How the fidelity scoring algorithm works
+
+After extracting entities from both versions, the checker computes a score as: `1.0 − (new_entities / max(original_entities, 1))`. An entity counts as "new" if it appears in the rewritten text but not in the original bullet. Each new entity is also assigned a severity — HIGH for company names and job titles (hardest to explain away), MEDIUM for technologies and metrics (common fabrication vector), LOW for contextual terms. The final `fidelity_score` is a float between 0.0 and 1.0; 1.0 means every entity in the rewrite was present in the original. The system uses two thresholds: WARN (0.80) triggers a retry; STRICT (0.90) marks the result as fully passed.
+
+### 4. The rewrite-check-retry loop
+
+The agent runs a maximum of two Claude calls per experience entry. The first call rewrites the bullets using the v2 prompt (DO NOT / YOU MAY guardrails + self-check). The `FidelityChecker` immediately evaluates the output. If `fidelity_score >= 0.90`, the result is accepted. If `0.80 ≤ score < 0.90`, the agent retries with a structured retry prompt that lists the specific flagged entities by name and severity: "these claims cannot be traced to the original resume — remove them before responding." If `score < 0.80` after the retry, the result is returned with `fidelity_status = "failed"` so the caller can surface a warning to the user. The retry prompt injects concrete, actionable information rather than a vague "be more careful" instruction, which is why 6 of the 7 retried pairs recovered to fidelity = 1.000.
+
+### 5. Results: 92% reduction in fabricated content
+
+Across 10 diverse resume-JD pairs (career transitions, skill gaps, passive language), the baseline (no fidelity checking) produced 13 flagged entities, including 7 technology fabrications, 3 metric inventions, and 3 company/title changes. The checked mode with the v2 prompt + retry loop reduced that to 1 flagged entity — a confirmed false positive where the model correctly used a technology from the candidate's skills section. The trade-off is a ~17pp reduction in keyword coverage (from +50pp to +33pp on average), which reflects the system correctly refusing to inject keywords the candidate does not genuinely have. 8 of 10 pairs achieved GOOD grade (fidelity ≥ 0.90 and keyword coverage improved); 1 was OK; only 1 failed, and that failure is attributable to the false-positive edge case rather than genuine hallucination.
+
+---
+
 ## Next Steps
 
 - **Threshold tuning (Day 26):** Consider raising `FIDELITY_THRESHOLD_WARN` from 0.80 → 0.70 for pairs where the candidate has verified technologies in their skills list; or expand fidelity extraction to include the full resume context (not just original bullet text).

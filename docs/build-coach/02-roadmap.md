@@ -96,6 +96,7 @@
 - [x] **Day 24:** Implement fidelity checker as a separate validation step. If fidelity score < threshold, retry rewrite with stricter prompt. Log all flagged entities.
 - [x] **Day 25:** Build evaluation harness: prepare 10 resume-JD pairs with manually written "ideal rewrites." Run baseline (no fidelity check) vs with fidelity check. Compute metrics: keyword coverage improvement, fidelity score, false positive rate.
 - [x] **Day 26:** Iterate on prompts. Try different Claude models (Haiku for speed, Sonnet for quality). Document findings in `docs/evaluation/rewrite-eval-v1.md` and `docs/evaluation/prompt-iterations.md`.
+- [x] **Day 27:** Integrate into LangGraph flow. Spring Boot endpoint: `POST /api/workflow/full` (Spring Boot-orchestrated match → rewrite → persist). `GET /api/workflow/full/{id}` for retrieval. Buffer day.
 
 **Understand before moving on:**
 - What is "hallucination" in the context of resume rewriting? Why is it dangerous?
