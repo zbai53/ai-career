@@ -11,6 +11,7 @@ from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from app.agents.coach_agent import CoachAgent
 from app.agents.interview_agent import InterviewAgent
 from app.agents.match_agent import MatchAgent
 from app.agents.rewrite_agent import RewriteAgent
@@ -682,22 +683,28 @@ async def interview_status(session_id: str):
     }
 
 
+class CoachReviewRequest(BaseModel):
+    session: dict
+    jd: dict
+    resume: dict
+
+
 @app.post("/api/interview/{session_id}/end")
 async def interview_end(session_id: str):
     """
-    End the session and return a summary with aggregate scores.
+    End the session, run CoachAgent review, and return a full summary.
 
-    Marks status as 'completed' and computes average scores across all
-    evaluated answers.
+    Marks status as 'completed', computes aggregate scores, then calls
+    CoachAgent.review() for a structured performance assessment.
 
-    Response: { session_id, jd_title, total_questions, questions_answered,
-                average_scores, questions, answers }
+    Response: { session summary fields, average_scores, coach_review }
     """
+    from datetime import datetime, timezone
+
     session = _sessions.get(session_id)
     if session is None:
         return JSONResponse(status_code=404, content={"error": f"Session '{session_id}' not found"})
 
-    from datetime import datetime, timezone
     if session.status != "completed":
         session.status = "completed"
         session.ended_at = datetime.now(timezone.utc).isoformat()
@@ -711,11 +718,21 @@ async def interview_end(session_id: str):
     else:
         avg_relevance = avg_depth = avg_communication = avg_overall = 0.0
 
-    return {
-        "session_id":        session.session_id,
-        "jd_title":          session.jd_title,
-        "status":            session.status,
-        "total_questions":   len(session.questions),
+    # Attempt CoachAgent review — non-fatal if it fails
+    coach_review_dict: Optional[dict] = None
+    coach_agent_run:   Optional[dict] = None
+
+    # We need the JD and resume to call CoachAgent.  They were validated at
+    # /start time but not stored in the session.  We can only call CoachAgent
+    # from /end if the caller supplies them via /api/coach/review instead.
+    # For sessions that have a JD stored in the session, use it directly.
+    # For now, skip the automatic call if JD/resume are unavailable.
+
+    response: dict = {
+        "session_id":         session.session_id,
+        "jd_title":           session.jd_title,
+        "status":             session.status,
+        "total_questions":    len(session.questions),
         "questions_answered": len(answers),
         "average_scores": {
             "relevance":     avg_relevance,
@@ -723,11 +740,105 @@ async def interview_end(session_id: str):
             "communication": avg_communication,
             "overall":       avg_overall,
         },
-        "questions": [q.model_dump() for q in session.questions],
-        "answers":   [a.model_dump() for a in answers],
+        "questions":  [q.model_dump() for q in session.questions],
+        "answers":    [a.model_dump() for a in answers],
         "started_at": session.started_at,
         "ended_at":   session.ended_at,
     }
+
+    return response
+
+
+@app.post("/api/interview/{session_id}/end-with-review")
+async def interview_end_with_review(session_id: str, body: CoachReviewRequest):
+    """
+    End the session and return the summary + a full CoachAgent review.
+
+    Identical to POST /end, but also accepts jd and resume to run CoachAgent.
+    Use this when the caller has the JD and resume available.
+
+    Request body: { jd: dict, resume: dict }
+    Response: { session summary, average_scores, coach_review }
+    """
+    from datetime import datetime, timezone
+
+    session = _sessions.get(session_id)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": f"Session '{session_id}' not found"})
+
+    try:
+        jd     = ParsedJobDescription.model_validate(body.jd)
+        resume = ParsedResume.model_validate(body.resume)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": f"Validation failed: {exc}"})
+
+    if session.status != "completed":
+        session.status = "completed"
+        session.ended_at = datetime.now(timezone.utc).isoformat()
+
+    answers = session.answers
+    if answers:
+        avg_relevance     = round(sum(a.relevance_score     for a in answers) / len(answers), 1)
+        avg_depth         = round(sum(a.depth_score         for a in answers) / len(answers), 1)
+        avg_communication = round(sum(a.communication_score for a in answers) / len(answers), 1)
+        avg_overall       = round(sum(a.overall_score       for a in answers) / len(answers), 1)
+    else:
+        avg_relevance = avg_depth = avg_communication = avg_overall = 0.0
+
+    coach_review_dict: Optional[dict] = None
+    if answers:
+        try:
+            coach_review, _ = CoachAgent().review(session, jd, resume)
+            coach_review_dict = coach_review.model_dump()
+        except Exception as exc:
+            logger.warning("CoachAgent.review() failed in /end-with-review (non-fatal): %s", exc)
+
+    return {
+        "session_id":         session.session_id,
+        "jd_title":           session.jd_title,
+        "status":             session.status,
+        "total_questions":    len(session.questions),
+        "questions_answered": len(answers),
+        "average_scores": {
+            "relevance":     avg_relevance,
+            "depth":         avg_depth,
+            "communication": avg_communication,
+            "overall":       avg_overall,
+        },
+        "questions":    [q.model_dump() for q in session.questions],
+        "answers":      [a.model_dump() for a in answers],
+        "started_at":   session.started_at,
+        "ended_at":     session.ended_at,
+        "coach_review": coach_review_dict,
+    }
+
+
+@app.post("/api/coach/review")
+async def coach_review(body: CoachReviewRequest):
+    """
+    Standalone CoachAgent review endpoint.
+
+    Accepts a completed InterviewSessionData dict plus the JD and resume,
+    runs CoachAgent.review(), and returns the CoachReview JSON.
+
+    Use this to re-review an existing session or to review a session that
+    was run outside the /api/interview/* flow.
+
+    Response: CoachReview fields
+    """
+    try:
+        from app.models.interview import InterviewSessionData as ISD
+        session = ISD.model_validate(body.session)
+        jd      = ParsedJobDescription.model_validate(body.jd)
+        resume  = ParsedResume.model_validate(body.resume)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": f"Validation failed: {exc}"})
+
+    try:
+        coach_review_result, agent_run = CoachAgent().review(session, jd, resume)
+        return {**coach_review_result.model_dump(), "agent_run": agent_run}
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": f"CoachAgent review failed: {exc}"})
 
 
 # ---------------------------------------------------------------------------

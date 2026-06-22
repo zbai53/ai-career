@@ -31,6 +31,7 @@ from typing import Optional
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from app.agents.coach_agent import CoachAgent
 from app.agents.jd_agent import JDAgent
 from app.agents.match_agent import MatchAgent
 from app.agents.resume_agent import ResumeAgent
@@ -411,13 +412,115 @@ def interview_node(state: JobHelperState) -> dict:
 
 
 def review_node(state: JobHelperState) -> dict:
-    """Placeholder — CoachAgent wired in Phase 5."""
-    # Preserve "degraded" if match ran in degraded mode; otherwise mark completed.
-    status = state.get("workflow_status", "running")
-    return {
-        "current_step":   "reviewing",
-        "workflow_status": "completed" if status != "degraded" else "degraded",
-    }
+    """
+    Call CoachAgent to review the completed interview session.
+
+    Builds an InterviewSessionData from the interview_messages stored in state
+    (pairs of interviewer question / candidate answer turns).  If no interview
+    data is present (e.g. interview_node is still a placeholder), the node
+    skips the Claude call and completes the workflow gracefully.
+    """
+    from datetime import datetime, timezone
+
+    from app.models.interview import AnswerEvaluation, InterviewQuestion, InterviewSessionData
+
+    prior_status = state.get("workflow_status", "running")
+    final_status = "completed" if prior_status != "degraded" else "degraded"
+
+    # ------------------------------------------------------------------ #
+    # Build Q&A pairs from interview_messages in state                    #
+    # ------------------------------------------------------------------ #
+    messages = state.get("interview_messages") or []
+    pairs: list[tuple[str, str]] = []
+    pending_q: str | None = None
+    for msg in messages:
+        role    = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "interviewer":
+            pending_q = content
+        elif role == "candidate" and pending_q is not None:
+            pairs.append((pending_q, content))
+            pending_q = None
+
+    # If there is nothing to review, complete without a Claude call.
+    if not pairs:
+        logger.info("[workflow] review_node: no interview messages — skipping CoachAgent")
+        return {
+            "current_step":    "reviewing",
+            "interview_review": None,
+            "workflow_status": final_status,
+        }
+
+    # ------------------------------------------------------------------ #
+    # Build a minimal InterviewSessionData from the raw message pairs     #
+    # ------------------------------------------------------------------ #
+    now_iso = datetime.now(timezone.utc).isoformat()
+    jd_title = (state.get("jd") or {}).get("title", "Unknown Role")
+
+    questions = [
+        InterviewQuestion(
+            text=q, type="general", category="general",
+            difficulty="medium", topics=[],
+        )
+        for q, _ in pairs
+    ]
+    answers = [
+        AnswerEvaluation(
+            question=q, answer=a,
+            relevance_score=5.0, depth_score=5.0,
+            communication_score=5.0, overall_score=5.0,
+            strengths=[], improvements=[], follow_up=None,
+        )
+        for q, a in pairs
+    ]
+
+    session = InterviewSessionData(
+        session_id="workflow-session",
+        jd_title=jd_title,
+        questions=questions,
+        answers=answers,
+        current_question_index=len(pairs),
+        status="completed",
+        started_at=now_iso,
+        ended_at=now_iso,
+    )
+
+    # ------------------------------------------------------------------ #
+    # Call CoachAgent                                                      #
+    # ------------------------------------------------------------------ #
+    if not state.get("jd") or not state.get("resume"):
+        logger.warning("[workflow] review_node: jd or resume missing — skipping CoachAgent")
+        return {
+            "current_step":    "reviewing",
+            "interview_review": None,
+            "workflow_status": final_status,
+        }
+
+    try:
+        jd     = ParsedJobDescription.model_validate(state["jd"])
+        resume = ParsedResume.model_validate(state["resume"])
+
+        agent = CoachAgent()
+        coach_review, agent_run = agent.review(session, jd, resume)
+
+        return {
+            "current_step":    "reviewing",
+            "interview_review": coach_review.model_dump(),
+            "agent_runs":      state.get("agent_runs", []) + [agent_run],
+            "error":           None,
+            "workflow_status": final_status,
+        }
+    except Exception as exc:
+        msg = f"review_node CoachAgent failed: {exc}"
+        logger.error("[workflow] %s", msg, exc_info=True)
+        # Non-fatal: the interview already happened — don't fail the whole run.
+        return {
+            "current_step":    "reviewing",
+            "interview_review": None,
+            "agent_runs":      state.get("agent_runs", []) + [_failed_agent_run("coach_agent", msg)],
+            "error":           None,          # intentionally suppressed
+            "workflow_status": final_status,
+        }
 
 
 # =============================================================================
