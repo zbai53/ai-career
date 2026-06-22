@@ -5,6 +5,22 @@
 
 ---
 
+## Day 29 — 2025-06-21 (Phase 5: Interview + Coach Agents + RAG)
+
+**Completed:**
+- Implemented InterviewAgent with RAG-powered question selection (60% technical, 40% behavioral, mixed difficulty)
+- Multi-turn interview flow: start → ask → evaluate answer → follow-up → next question
+- Answer evaluation via Claude: relevance, depth, communication scores (0-10) with strengths/improvements
+- Follow-up question generation based on evaluation
+- Created InterviewSessionData, AnswerEvaluation, InterviewQuestion Pydantic models
+- FastAPI endpoints: POST /start, POST /{id}/answer, GET /{id}, POST /{id}/end
+- In-memory session storage (dict keyed by session_id)
+- 7 unit tests covering session flow, scoring, RAG retrieval, question mix
+
+**Blockers:** None
+
+**Next:** Day 30 — Implement Coach Agent for post-interview performance review
+
 ## Day 28 — 2025-06-21 (Phase 5: Interview + Coach Agents + RAG)
 
 **Completed:**
