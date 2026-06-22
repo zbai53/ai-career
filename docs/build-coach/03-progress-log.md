@@ -5,6 +5,21 @@
 
 ---
 
+## Day 31 — 2025-06-22 (Phase 5: Interview + Coach Agents + RAG)
+
+**Completed:**
+- Implemented process_turn() orchestrating full turn: evaluate → decide next action → respond
+- Three next_actions: re_answer (off-topic, relevance<5), follow_up (shallow, depth<5), next_question (good, overall>=7)
+- Max 2 follow-ups per question, then force advance
+- Full conversation_history tracking with role/content/turn_number
+- Updated /api/interview/{id}/answer to return evaluation + next_action + conversation history
+- Coach Agent now receives full conversation history for richer review
+- Verified: bad answer triggers re_answer, good answer advances, follow-up limit enforced
+
+**Blockers:** None
+
+**Next:** Day 32 — Spring Boot interview endpoints, persist sessions to DB
+
 ## Day 30 — 2025-06-21 (Phase 5: Interview + Coach Agents + RAG)
 
 **Completed:**
