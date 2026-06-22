@@ -5,6 +5,28 @@
 
 ---
 
+## Day 27 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
+
+**Completed:**
+- Full pipeline integration tests: low score → rewrite loop, high score → skip, max retry, fidelity retry
+- Spring Boot WorkflowController /api/workflow/full: orchestrated flow with DB persistence
+- Phase 4 final evaluation documented with key metrics and interview talking points
+- All Phase 4 roadmap items marked complete
+- Full test suite passing
+
+**Blockers:** None
+
+**Phase 4 Summary:**
+- RewriteAgent with DO NOT / YOU MAY guardrails and self-check
+- FidelityChecker with dual extraction (regex + Claude), severity classification (HIGH/MEDIUM/LOW)
+- Configurable thresholds: STRICT (0.90), WARN (0.80)
+- Rewrite-check-retry loop: max 2 attempts with flagged entity feedback
+- Centralized prompt templates (versioned, iterable)
+- 10-pair evaluation harness with baseline vs fidelity-checked comparison
+- Model comparison evaluation across prompt strategies
+
+**Next:** Day 28 — Phase 5: Interview Agent + Coach Agent + RAG (set up Qdrant, prepare question bank)
+
 ## Day 26 — 2025-06-21 (Phase 4: Rewrite Agent + Fidelity System)
 
 **Completed:**
