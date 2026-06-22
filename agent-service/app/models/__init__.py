@@ -14,6 +14,7 @@ from .job_description import (
 from .match_result import MatchResult
 from .rewrite_result import RewrittenBullet, RewrittenExperience, RewriteResult, ImprovementMetrics
 from .fidelity_report import FidelityFlag, FidelityReport
+from .interview import InterviewQuestion, AnswerEvaluation, InterviewSessionData
 
 __all__ = [
     "ResumeContact",
@@ -32,4 +33,7 @@ __all__ = [
     "ImprovementMetrics",
     "FidelityFlag",
     "FidelityReport",
+    "InterviewQuestion",
+    "AnswerEvaluation",
+    "InterviewSessionData",
 ]

@@ -11,10 +11,12 @@ from fastapi import FastAPI, Form, UploadFile, File
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 
+from app.agents.interview_agent import InterviewAgent
 from app.agents.match_agent import MatchAgent
 from app.agents.rewrite_agent import RewriteAgent
 from app.agents.resume_agent import UnsupportedFileTypeError, TextExtractionError, ResumeParseError
 from app.agents.jd_agent import JDFetchError, JDParseError
+from app.models.interview import InterviewSessionData
 from app.graph.workflow import (
     get_workflow_state,
     run_full_pipeline,
@@ -30,6 +32,10 @@ app = FastAPI(title="AI Career Agent Service")
 
 _MODEL = "claude-haiku-4-5-20251001"
 _ALLOWED_SUFFIXES = {".pdf", ".docx"}
+
+# In-memory session store (keyed by session_id).
+# In production this would be Redis or a DB.
+_sessions: dict[str, InterviewSessionData] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -539,6 +545,189 @@ async def rag_search(body: RagSearchRequest):
         return results
     except Exception as exc:
         return JSONResponse(status_code=500, content={"error": f"Search failed: {exc}"})
+
+
+# ---------------------------------------------------------------------------
+# Interview — multi-turn mock interview
+# ---------------------------------------------------------------------------
+
+class InterviewStartRequest(BaseModel):
+    jd: dict
+    resume: dict
+    num_questions: Optional[int] = 5
+
+
+class InterviewAnswerRequest(BaseModel):
+    answer: str
+
+
+@app.post("/api/interview/start")
+async def interview_start(body: InterviewStartRequest):
+    """
+    Start a new mock interview session.
+
+    Validates the jd and resume dicts, retrieves questions from Qdrant via RAG,
+    stores the session in memory, and returns the first question.
+
+    Response: { session_id, first_question, question_number, total_questions,
+                type, difficulty }
+    """
+    try:
+        jd     = ParsedJobDescription.model_validate(body.jd)
+        resume = ParsedResume.model_validate(body.resume)
+    except Exception as exc:
+        return JSONResponse(status_code=400, content={"error": f"Validation failed: {exc}"})
+
+    try:
+        agent   = InterviewAgent()
+        session = agent.start_session(jd, resume, num_questions=body.num_questions or 5)
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": f"Failed to start session: {exc}"})
+
+    _sessions[session.session_id] = session
+
+    # Fetch and return the first question
+    first = agent.ask_next(session)
+    return {
+        "session_id": session.session_id,
+        **first,
+    }
+
+
+@app.post("/api/interview/{session_id}/answer")
+async def interview_answer(session_id: str, body: InterviewAnswerRequest):
+    """
+    Submit an answer for the current question in the session.
+
+    Evaluates the answer via Claude, optionally generates a follow-up question,
+    then advances to the next question.
+
+    Response: { evaluation, next_question } or { evaluation, done: True } when
+    all questions have been answered.
+    """
+    session = _sessions.get(session_id)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": f"Session '{session_id}' not found"})
+
+    if session.status == "completed":
+        return JSONResponse(status_code=409, content={"error": "Session is already completed"})
+
+    # The question the candidate just answered is the one *before* the current index
+    # (ask_next already advanced it).  If current_question_index == 0 the caller
+    # hasn't called /start yet — treat index-1 defensively.
+    answered_idx = session.current_question_index - 1
+    if answered_idx < 0 or answered_idx >= len(session.questions):
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No active question to answer. Call /start first."},
+        )
+
+    current_question = session.questions[answered_idx].text
+
+    agent = InterviewAgent()
+
+    try:
+        evaluation = agent.evaluate_answer(session, current_question, body.answer)
+    except Exception as exc:
+        return JSONResponse(status_code=500, content={"error": f"Evaluation failed: {exc}"})
+
+    # Optional follow-up (best-effort; never blocks the response)
+    follow_up_text: Optional[str] = None
+    try:
+        follow_up_text = agent.generate_follow_up(session, current_question, body.answer, evaluation)
+    except Exception as exc:
+        logger.warning("Follow-up generation failed (non-fatal): %s", exc)
+
+    # Advance to next question
+    next_q = agent.ask_next(session)
+
+    response: dict = {"evaluation": evaluation}
+    if follow_up_text:
+        response["follow_up"] = follow_up_text
+    response.update(next_q)  # merges next_question fields or {"done": True, "message": ...}
+    return response
+
+
+@app.get("/api/interview/{session_id}")
+async def interview_status(session_id: str):
+    """
+    Return the current state of an interview session.
+
+    Response includes: session_id, jd_title, status, current_question_index,
+    total_questions, questions asked so far (with their texts), and evaluations.
+    """
+    session = _sessions.get(session_id)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": f"Session '{session_id}' not found"})
+
+    asked = session.questions[: session.current_question_index]
+    return {
+        "session_id":             session.session_id,
+        "jd_title":               session.jd_title,
+        "status":                 session.status,
+        "current_question_index": session.current_question_index,
+        "total_questions":        len(session.questions),
+        "questions_asked": [
+            {
+                "question_number": i + 1,
+                "text":            q.text,
+                "type":            q.type,
+                "difficulty":      q.difficulty,
+            }
+            for i, q in enumerate(asked)
+        ],
+        "answers": [a.model_dump() for a in session.answers],
+        "started_at": session.started_at,
+        "ended_at":   session.ended_at,
+    }
+
+
+@app.post("/api/interview/{session_id}/end")
+async def interview_end(session_id: str):
+    """
+    End the session and return a summary with aggregate scores.
+
+    Marks status as 'completed' and computes average scores across all
+    evaluated answers.
+
+    Response: { session_id, jd_title, total_questions, questions_answered,
+                average_scores, questions, answers }
+    """
+    session = _sessions.get(session_id)
+    if session is None:
+        return JSONResponse(status_code=404, content={"error": f"Session '{session_id}' not found"})
+
+    from datetime import datetime, timezone
+    if session.status != "completed":
+        session.status = "completed"
+        session.ended_at = datetime.now(timezone.utc).isoformat()
+
+    answers = session.answers
+    if answers:
+        avg_relevance     = round(sum(a.relevance_score     for a in answers) / len(answers), 1)
+        avg_depth         = round(sum(a.depth_score         for a in answers) / len(answers), 1)
+        avg_communication = round(sum(a.communication_score for a in answers) / len(answers), 1)
+        avg_overall       = round(sum(a.overall_score       for a in answers) / len(answers), 1)
+    else:
+        avg_relevance = avg_depth = avg_communication = avg_overall = 0.0
+
+    return {
+        "session_id":        session.session_id,
+        "jd_title":          session.jd_title,
+        "status":            session.status,
+        "total_questions":   len(session.questions),
+        "questions_answered": len(answers),
+        "average_scores": {
+            "relevance":     avg_relevance,
+            "depth":         avg_depth,
+            "communication": avg_communication,
+            "overall":       avg_overall,
+        },
+        "questions": [q.model_dump() for q in session.questions],
+        "answers":   [a.model_dump() for a in answers],
+        "started_at": session.started_at,
+        "ended_at":   session.ended_at,
+    }
 
 
 # ---------------------------------------------------------------------------
