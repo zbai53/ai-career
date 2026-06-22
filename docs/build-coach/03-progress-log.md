@@ -5,6 +5,21 @@
 
 ---
 
+## Day 30 — 2025-06-21 (Phase 5: Interview + Coach Agents + RAG)
+
+**Completed:**
+- Implemented CoachAgent: analyzes full interview, evaluates STAR completeness, technical depth, communication
+- Coach provides: overall score, top strengths, areas for improvement, recommended topics, readiness assessment
+- Integrated coach review into /api/interview/{id}/end (auto-triggers after interview)
+- Added standalone POST /api/coach/review endpoint
+- Wired review_node into LangGraph workflow
+- 7 unit tests covering score ranges, STAR analysis, readiness categories
+- Verified full flow: start interview → answer questions → end → receive coach evaluation
+
+**Blockers:** None
+
+**Next:** Day 31 — Multi-turn interview logic, follow-up questions, conversation state management
+
 ## Day 29 — 2025-06-21 (Phase 5: Interview + Coach Agents + RAG)
 
 **Completed:**
