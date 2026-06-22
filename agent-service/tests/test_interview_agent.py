@@ -14,7 +14,7 @@ Patching strategy:
 
 import json
 from datetime import datetime, timezone
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, call, patch, Mock
 
 import pytest
 
@@ -95,6 +95,22 @@ def _fake_eval_json(
         "improvements":        improvements or ["Add more detail", "Mention trade-offs"],
         "follow_up_question":  follow_up,
     })
+
+
+def _mock_claude_multi(responses: list[str]) -> MagicMock:
+    """Return an anthropic.Anthropic mock that yields responses in sequence."""
+    def _make_message(text: str) -> MagicMock:
+        cb = MagicMock()
+        cb.text = text
+        msg = MagicMock()
+        msg.content = [cb]
+        msg.usage.input_tokens = 100
+        msg.usage.output_tokens = 80
+        return msg
+
+    client = MagicMock()
+    client.messages.create.side_effect = [_make_message(r) for r in responses]
+    return MagicMock(return_value=client)
 
 
 def _mock_claude(response_text: str) -> MagicMock:
@@ -444,3 +460,181 @@ class TestSessionEndSummary:
         for i, record in enumerate(session.answers):
             assert record.question == f"Question {i + 1}"
             assert record.answer   == f"Answer {i + 1}"
+
+
+# ---------------------------------------------------------------------------
+# 6. Multi-turn logic — process_turn, follow-up cap, conversation history
+# ---------------------------------------------------------------------------
+
+class TestMultiTurnLogic:
+
+    def test_low_relevance_triggers_re_answer(self):
+        """
+        When relevance_score < 5 and overall < 7, process_turn must return
+        next_action='re_answer' and a next_content that repeats the question.
+        """
+        eval_json = _fake_eval_json(relevance=3.0, depth=7.0, communication=7.0, overall=6.0)
+
+        with patch("app.agents.interview_agent.anthropic.Anthropic", _mock_claude_multi([eval_json])):
+            agent   = InterviewAgent()
+            session = _session_with_questions(2)
+            agent.ask_next(session)                          # advance to Q1
+            result  = agent.process_turn(session, "An off-topic answer")
+
+        assert result["next_action"] == "re_answer"
+        assert result["next_content"] is not None
+        assert "Question 1" in result["next_content"]
+        assert result["done"] is False
+
+    def test_low_depth_triggers_follow_up(self):
+        """
+        When relevance >= 5 but depth < 5 (and overall < 7), process_turn must
+        return next_action='follow_up' with the generated follow-up text.
+        """
+        eval_json    = _fake_eval_json(relevance=7.0, depth=3.0, communication=7.0, overall=5.5)
+        follow_up_q  = "Can you walk me through a specific example?"
+
+        with patch(
+            "app.agents.interview_agent.anthropic.Anthropic",
+            _mock_claude_multi([eval_json, follow_up_q]),
+        ):
+            agent   = InterviewAgent()
+            session = _session_with_questions(2)
+            agent.ask_next(session)
+            result  = agent.process_turn(session, "A shallow answer")
+
+        assert result["next_action"] == "follow_up"
+        assert result["next_content"] == follow_up_q
+        assert result["done"] is False
+
+    def test_high_score_moves_to_next(self):
+        """
+        When overall_score >= 7, process_turn must advance to the next question
+        regardless of other scores.
+        """
+        eval_json = _fake_eval_json(relevance=9.0, depth=8.0, communication=9.0, overall=8.5)
+
+        with patch("app.agents.interview_agent.anthropic.Anthropic", _mock_claude_multi([eval_json])):
+            agent   = InterviewAgent()
+            session = _session_with_questions(2)
+            agent.ask_next(session)
+            result  = agent.process_turn(session, "An excellent answer")
+
+        assert result["next_action"] == "next_question"
+        assert result["next_content"] == "Question 2"
+        assert result["done"] is False
+
+    def test_max_follow_ups_enforced(self):
+        """
+        When follow_up_counts for the current question is already at the cap,
+        process_turn must force next_question even if scores are low.
+        """
+        eval_json = _fake_eval_json(relevance=3.0, depth=3.0, communication=4.0, overall=4.0)
+
+        with patch("app.agents.interview_agent.anthropic.Anthropic", _mock_claude_multi([eval_json])):
+            agent   = InterviewAgent()
+            session = _session_with_questions(2)
+            agent.ask_next(session)
+            session.follow_up_counts = {0: 2}      # already at cap
+            result  = agent.process_turn(session, "Another weak answer")
+
+        assert result["next_action"] == "next_question", (
+            "Cap reached — must advance regardless of low scores"
+        )
+        assert result["done"] is False
+
+    def test_conversation_history_tracked(self):
+        """
+        After two turns (follow_up then next_question) the history must contain
+        four entries in order: candidate → interviewer → candidate → interviewer.
+        """
+        eval1       = _fake_eval_json(relevance=7.0, depth=3.0, overall=5.0,
+                                       follow_up="Elaborate more?")
+        follow_up_q = "Can you give a concrete example?"
+        eval2       = _fake_eval_json(relevance=9.0, depth=8.0, overall=8.5)
+
+        with patch(
+            "app.agents.interview_agent.anthropic.Anthropic",
+            _mock_claude_multi([eval1, follow_up_q, eval2]),
+        ):
+            agent   = InterviewAgent()
+            session = _session_with_questions(2)
+            agent.ask_next(session)                             # Q1 presented
+
+            r1 = agent.process_turn(session, "A shallow answer")
+            assert r1["next_action"] == "follow_up"
+
+            r2 = agent.process_turn(session, "A better detailed answer")
+            assert r2["next_action"] == "next_question"
+
+        history = session.conversation_history
+        assert len(history) == 4, f"Expected 4 history entries, got {len(history)}"
+
+        roles = [h["role"] for h in history]
+        assert roles == ["candidate", "interviewer", "candidate", "interviewer"]
+
+        assert history[0]["content"] == "A shallow answer"
+        assert history[1]["content"] == follow_up_q
+        assert history[2]["content"] == "A better detailed answer"
+        assert history[3]["content"] == "Question 2"
+
+        # turn_number must be monotonically increasing
+        turn_numbers = [h["turn_number"] for h in history]
+        assert turn_numbers == sorted(turn_numbers), (
+            f"turn_numbers not monotonic: {turn_numbers}"
+        )
+
+    def test_process_turn_returns_complete_response(self):
+        """
+        process_turn must return all documented keys with correct types.
+        """
+        eval_json = _fake_eval_json(overall=8.0)
+
+        with patch("app.agents.interview_agent.anthropic.Anthropic", _mock_claude_multi([eval_json])):
+            agent   = InterviewAgent()
+            session = _session_with_questions(2)
+            agent.ask_next(session)
+            result  = agent.process_turn(session, "My answer")
+
+        for key in ("evaluation", "next_action", "next_content", "done", "conversation_history"):
+            assert key in result, f"Missing key: {key}"
+
+        assert isinstance(result["evaluation"], dict)
+        assert isinstance(result["next_action"], str)
+        assert isinstance(result["done"], bool)
+        assert isinstance(result["conversation_history"], list)
+
+        # evaluation must carry through the next_action flag
+        assert result["evaluation"]["next_action"] == result["next_action"]
+
+    def test_end_session_uses_conversation_history(self):
+        """
+        After process_turn populates conversation_history, CoachAgent.review
+        must receive a session object with that history intact.
+        """
+        from app.agents.coach_agent import CoachAgent
+
+        eval_json = _fake_eval_json(overall=8.0)
+
+        with patch("app.agents.interview_agent.anthropic.Anthropic", _mock_claude_multi([eval_json])):
+            agent   = InterviewAgent()
+            session = _session_with_questions(2)
+            agent.ask_next(session)
+            agent.process_turn(session, "My answer")
+
+        # History must have at least the candidate's answer and Q2
+        assert len(session.conversation_history) >= 1
+
+        # Patch CoachAgent.review to capture what session it receives
+        captured: dict = {}
+
+        def _fake_review(self_ref, sess, jd, resume):
+            captured["session"] = sess
+            return MagicMock(), {}
+
+        with patch.object(CoachAgent, "review", _fake_review):
+            CoachAgent().review(session, _minimal_jd(), _minimal_resume())
+
+        assert "session" in captured
+        assert captured["session"].conversation_history == session.conversation_history
+        assert len(captured["session"].conversation_history) >= 1

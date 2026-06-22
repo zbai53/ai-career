@@ -91,6 +91,25 @@ def _to_interview_question(raw: dict) -> InterviewQuestion:
     )
 
 
+def _decide_next_action(record: "AnswerEvaluation") -> str:
+    """
+    Derive the recommended next_action from a completed AnswerEvaluation.
+
+    Rules (evaluated in priority order):
+      1. overall_score >= 7           → "next_question"   (strong enough — move on)
+      2. relevance_score < 5          → "re_answer"       (off-topic)
+      3. depth_score < 5              → "follow_up"       (needs probing)
+      4. fallback                     → "next_question"   (borderline — advance)
+    """
+    if record.overall_score >= 7.0:
+        return "next_question"
+    if record.relevance_score < 5.0:
+        return "re_answer"
+    if record.depth_score < 5.0:
+        return "follow_up"
+    return "next_question"
+
+
 class InterviewAgent:
     """
     Orchestrates a mock interview session.
@@ -186,6 +205,9 @@ class InterviewAgent:
             status="active",
             started_at=datetime.now(timezone.utc).isoformat(),
             ended_at=None,
+            conversation_history=[],
+            follow_up_counts={},
+            max_follow_ups_per_question=2,
         )
 
     # ------------------------------------------------------------------
@@ -290,6 +312,8 @@ class InterviewAgent:
         )
         session.answers.append(record)
 
+        next_action = _decide_next_action(record)
+
         return {
             "relevance_score":     record.relevance_score,
             "depth_score":         record.depth_score,
@@ -298,6 +322,7 @@ class InterviewAgent:
             "strengths":           record.strengths,
             "improvements":        record.improvements,
             "follow_up":           record.follow_up,
+            "next_action":         next_action,
         }
 
     # ------------------------------------------------------------------
@@ -339,6 +364,159 @@ class InterviewAgent:
         except Exception as exc:
             logger.warning("Follow-up generation failed, returning raw hint: %s", exc)
             return hint
+
+    # ------------------------------------------------------------------
+    # 5. Process turn (orchestrates evaluate → decide → respond)
+    # ------------------------------------------------------------------
+
+    def process_turn(self, session: InterviewSessionData, answer: str) -> dict:
+        """
+        Orchestrate a complete conversation turn.
+
+        Evaluates *answer* for the question currently active in *session*,
+        decides the next action, and returns everything the caller needs to
+        drive the next UI step.
+
+        Next-action logic
+        -----------------
+        re_answer    relevance_score < 5  (off-topic)
+        follow_up    relevance >= 5 AND depth_score < 5
+        next_question overall_score >= 7  OR follow-up cap reached
+        follow_up    fallback when none of the above applies
+
+        Follow-up cap
+        -------------
+        At most `session.max_follow_ups_per_question` follow-ups per main
+        question (default 2).  Once the cap is hit the turn is forced to
+        advance regardless of scores.
+
+        Conversation history
+        --------------------
+        Every interviewer utterance and every candidate answer is appended to
+        `session.conversation_history` with a monotonically increasing
+        `turn_number`.
+
+        Returns
+        -------
+        {
+            "evaluation":        dict          # scores + next_action
+            "next_action":       str           # "follow_up" | "re_answer" | "next_question"
+            "next_content":      str | None    # follow-up Q, re-answer prompt, or next main Q
+            "done":              bool          # True when all questions exhausted
+            "conversation_history": list[dict]
+        }
+        """
+        # ------------------------------------------------------------------
+        # Determine which question is currently active
+        # ------------------------------------------------------------------
+        q_idx = session.current_question_index - 1   # ask_next already advanced it
+        if q_idx < 0 or q_idx >= len(session.questions):
+            raise ValueError(
+                f"process_turn called with no active question "
+                f"(current_question_index={session.current_question_index}, "
+                f"total={len(session.questions)})"
+            )
+
+        current_q_text = session.questions[q_idx].text
+
+        # ------------------------------------------------------------------
+        # Record the candidate's answer in conversation history
+        # ------------------------------------------------------------------
+        turn_num = len(session.conversation_history) + 1
+        session.conversation_history.append({
+            "role":        "candidate",
+            "content":     answer,
+            "turn_number": turn_num,
+        })
+
+        # ------------------------------------------------------------------
+        # Evaluate the answer
+        # ------------------------------------------------------------------
+        evaluation = self.evaluate_answer(session, current_q_text, answer)
+        relevance  = evaluation["relevance_score"]
+        depth      = evaluation["depth_score"]
+        overall    = evaluation["overall_score"]
+
+        # ------------------------------------------------------------------
+        # Check follow-up cap for this question
+        # ------------------------------------------------------------------
+        follow_up_count = session.follow_up_counts.get(q_idx, 0)
+        cap_reached     = follow_up_count >= session.max_follow_ups_per_question
+
+        # ------------------------------------------------------------------
+        # Decide next action
+        # ------------------------------------------------------------------
+        if cap_reached or overall >= 7.0:
+            next_action = "next_question"
+        elif relevance < 5.0:
+            next_action = "re_answer"
+        elif depth < 5.0:
+            next_action = "follow_up"
+        else:
+            next_action = "next_question"
+
+        # ------------------------------------------------------------------
+        # Build the response content for each action
+        # ------------------------------------------------------------------
+        next_content: Optional[str] = None
+        done = False
+
+        if next_action == "re_answer":
+            next_content = (
+                f"Your answer didn't quite address the question. "
+                f"Please try again: {current_q_text}"
+            )
+            # Don't advance the index — stay on the same question
+            # Record as an interviewer turn
+            turn_num = len(session.conversation_history) + 1
+            session.conversation_history.append({
+                "role":        "interviewer",
+                "content":     next_content,
+                "turn_number": turn_num,
+            })
+
+        elif next_action == "follow_up":
+            follow_up_text = self.generate_follow_up(
+                session, current_q_text, answer, evaluation
+            )
+            if not follow_up_text:
+                # generate_follow_up returned None (no hint) — force advance
+                next_action = "next_question"
+            else:
+                next_content = follow_up_text
+                # Track the follow-up count for this question
+                session.follow_up_counts[q_idx] = follow_up_count + 1
+                turn_num = len(session.conversation_history) + 1
+                session.conversation_history.append({
+                    "role":        "interviewer",
+                    "content":     next_content,
+                    "turn_number": turn_num,
+                })
+
+        if next_action == "next_question":
+            nxt = self.ask_next(session)
+            if nxt.get("done"):
+                done = True
+                next_content = None
+            else:
+                next_content = nxt["question"]
+                turn_num = len(session.conversation_history) + 1
+                session.conversation_history.append({
+                    "role":        "interviewer",
+                    "content":     next_content,
+                    "turn_number": turn_num,
+                })
+
+        # Patch next_action into the evaluation dict so callers get one object
+        evaluation["next_action"] = next_action
+
+        return {
+            "evaluation":            evaluation,
+            "next_action":           next_action,
+            "next_content":          next_content,
+            "done":                  done,
+            "conversation_history":  session.conversation_history,
+        }
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -400,4 +578,7 @@ class InterviewAgent:
             status="active",
             started_at=datetime.now(timezone.utc).isoformat(),
             ended_at=None,
+            conversation_history=[],
+            follow_up_counts={},
+            max_follow_ups_per_question=2,
         )

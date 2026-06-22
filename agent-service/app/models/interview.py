@@ -43,3 +43,22 @@ class InterviewSessionData(BaseModel):
     )
     started_at: str = Field(description="ISO-8601 datetime when the session was created")
     ended_at: Optional[str] = Field(None, description="ISO-8601 datetime when the session ended")
+
+    # -----------------------------------------------------------------------
+    # Multi-turn conversation tracking
+    # -----------------------------------------------------------------------
+    conversation_history: list[dict] = Field(
+        default_factory=list,
+        description=(
+            "Full ordered conversation log. Each entry: "
+            "{role: 'interviewer'|'candidate', content: str, turn_number: int}"
+        ),
+    )
+    follow_up_counts: dict[int, int] = Field(
+        default_factory=dict,
+        description="Maps question_index (int) → number of follow-ups asked for that question",
+    )
+    max_follow_ups_per_question: int = Field(
+        default=2,
+        description="Maximum follow-up questions allowed per main question before force-advancing",
+    )

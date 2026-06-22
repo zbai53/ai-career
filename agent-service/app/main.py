@@ -598,13 +598,30 @@ async def interview_start(body: InterviewStartRequest):
 @app.post("/api/interview/{session_id}/answer")
 async def interview_answer(session_id: str, body: InterviewAnswerRequest):
     """
-    Submit an answer for the current question in the session.
+    Submit an answer for the active question and receive the next interviewer action.
 
-    Evaluates the answer via Claude, optionally generates a follow-up question,
-    then advances to the next question.
+    Delegates to InterviewAgent.process_turn() which evaluates the answer,
+    decides next_action (follow_up / re_answer / next_question), and advances
+    the session state in-place.
 
-    Response: { evaluation, next_question } or { evaluation, done: True } when
-    all questions have been answered.
+    Normal response:
+        {
+          "evaluation":           { scores, strengths, improvements, next_action },
+          "next_action":          "follow_up" | "re_answer" | "next_question",
+          "next_content":         "<follow-up Q, re-answer prompt, or next main Q>",
+          "question_number":      <int — 1-based index of the current main question>,
+          "total_questions":      <int>,
+          "follow_up_count":      <int — follow-ups asked on current question>,
+          "conversation_history": [ {role, content, turn_number}, ... ],
+          "is_complete":          false
+        }
+
+    When all questions are exhausted:
+        {
+          "next_action":  "done",
+          "is_complete":  true,
+          "message":      "Interview complete. Call POST /end for your review."
+        }
     """
     session = _sessions.get(session_id)
     if session is None:
@@ -613,40 +630,47 @@ async def interview_answer(session_id: str, body: InterviewAnswerRequest):
     if session.status == "completed":
         return JSONResponse(status_code=409, content={"error": "Session is already completed"})
 
-    # The question the candidate just answered is the one *before* the current index
-    # (ask_next already advanced it).  If current_question_index == 0 the caller
-    # hasn't called /start yet — treat index-1 defensively.
-    answered_idx = session.current_question_index - 1
-    if answered_idx < 0 or answered_idx >= len(session.questions):
+    # current_question_index was already advanced by /start's ask_next call.
+    # The active question is the one at index - 1.
+    active_q_idx = session.current_question_index - 1
+    if active_q_idx < 0 or active_q_idx >= len(session.questions):
         return JSONResponse(
             status_code=400,
             content={"error": "No active question to answer. Call /start first."},
         )
 
-    current_question = session.questions[answered_idx].text
-
-    agent = InterviewAgent()
-
     try:
-        evaluation = agent.evaluate_answer(session, current_question, body.answer)
+        turn = InterviewAgent().process_turn(session, body.answer)
     except Exception as exc:
-        return JSONResponse(status_code=500, content={"error": f"Evaluation failed: {exc}"})
+        return JSONResponse(status_code=500, content={"error": f"Turn processing failed: {exc}"})
 
-    # Optional follow-up (best-effort; never blocks the response)
-    follow_up_text: Optional[str] = None
-    try:
-        follow_up_text = agent.generate_follow_up(session, current_question, body.answer, evaluation)
-    except Exception as exc:
-        logger.warning("Follow-up generation failed (non-fatal): %s", exc)
+    if turn["done"]:
+        return {
+            "next_action":  "done",
+            "is_complete":  True,
+            "message":      "Interview complete. Call POST /end for your review.",
+        }
 
-    # Advance to next question
-    next_q = agent.ask_next(session)
+    # After process_turn the active question index may have advanced (next_question)
+    # or stayed the same (follow_up / re_answer).  Recalculate for response metadata.
+    # For re_answer / follow_up the current main question is still active_q_idx.
+    next_action = turn["next_action"]
+    if next_action == "next_question":
+        # ask_next was called inside process_turn, so index already moved forward.
+        current_main_q_idx = session.current_question_index - 1
+    else:
+        current_main_q_idx = active_q_idx
 
-    response: dict = {"evaluation": evaluation}
-    if follow_up_text:
-        response["follow_up"] = follow_up_text
-    response.update(next_q)  # merges next_question fields or {"done": True, "message": ...}
-    return response
+    return {
+        "evaluation":           turn["evaluation"],
+        "next_action":          next_action,
+        "next_content":         turn["next_content"],
+        "question_number":      current_main_q_idx + 1,
+        "total_questions":      len(session.questions),
+        "follow_up_count":      session.follow_up_counts.get(active_q_idx, 0),
+        "conversation_history": turn["conversation_history"],
+        "is_complete":          False,
+    }
 
 
 @app.get("/api/interview/{session_id}")
@@ -654,20 +678,34 @@ async def interview_status(session_id: str):
     """
     Return the current state of an interview session.
 
-    Response includes: session_id, jd_title, status, current_question_index,
-    total_questions, questions asked so far (with their texts), and evaluations.
+    Response includes: session_id, jd_title, status, progress info,
+    questions asked so far, evaluations, and the full conversation_history.
     """
     session = _sessions.get(session_id)
     if session is None:
         return JSONResponse(status_code=404, content={"error": f"Session '{session_id}' not found"})
 
-    asked = session.questions[: session.current_question_index]
+    total        = len(session.questions)
+    q_idx        = session.current_question_index
+    # "completed" questions are those for which ask_next has already advanced past them
+    # and whose answers have been recorded.
+    q_completed  = len(session.answers)
+    current_q    = (
+        session.questions[q_idx - 1].model_dump()
+        if 0 < q_idx <= total
+        else None
+    )
+
     return {
-        "session_id":             session.session_id,
-        "jd_title":               session.jd_title,
-        "status":                 session.status,
-        "current_question_index": session.current_question_index,
-        "total_questions":        len(session.questions),
+        "session_id":    session.session_id,
+        "jd_title":      session.jd_title,
+        "status":        session.status,
+        # Progress
+        "questions_completed":    q_completed,
+        "current_question":       current_q,
+        "total_questions":        total,
+        "current_question_index": q_idx,
+        # Detail
         "questions_asked": [
             {
                 "question_number": i + 1,
@@ -675,11 +713,13 @@ async def interview_status(session_id: str):
                 "type":            q.type,
                 "difficulty":      q.difficulty,
             }
-            for i, q in enumerate(asked)
+            for i, q in enumerate(session.questions[:q_idx])
         ],
-        "answers": [a.model_dump() for a in session.answers],
-        "started_at": session.started_at,
-        "ended_at":   session.ended_at,
+        "answers":              [a.model_dump() for a in session.answers],
+        "conversation_history": session.conversation_history,
+        "follow_up_counts":     session.follow_up_counts,
+        "started_at":           session.started_at,
+        "ended_at":             session.ended_at,
     }
 
 
@@ -692,12 +732,14 @@ class CoachReviewRequest(BaseModel):
 @app.post("/api/interview/{session_id}/end")
 async def interview_end(session_id: str):
     """
-    End the session, run CoachAgent review, and return a full summary.
+    End the session and return a full summary including conversation history.
 
-    Marks status as 'completed', computes aggregate scores, then calls
-    CoachAgent.review() for a structured performance assessment.
+    Marks status as 'completed' and computes aggregate scores.  The full
+    conversation_history (including follow-up and re-answer turns) is included
+    in the response so CoachAgent (called via /end-with-review or /api/coach/review)
+    can produce richer feedback.
 
-    Response: { session summary fields, average_scores, coach_review }
+    Response: { session summary, average_scores, conversation_history }
     """
     from datetime import datetime, timezone
 
@@ -718,17 +760,7 @@ async def interview_end(session_id: str):
     else:
         avg_relevance = avg_depth = avg_communication = avg_overall = 0.0
 
-    # Attempt CoachAgent review — non-fatal if it fails
-    coach_review_dict: Optional[dict] = None
-    coach_agent_run:   Optional[dict] = None
-
-    # We need the JD and resume to call CoachAgent.  They were validated at
-    # /start time but not stored in the session.  We can only call CoachAgent
-    # from /end if the caller supplies them via /api/coach/review instead.
-    # For sessions that have a JD stored in the session, use it directly.
-    # For now, skip the automatic call if JD/resume are unavailable.
-
-    response: dict = {
+    return {
         "session_id":         session.session_id,
         "jd_title":           session.jd_title,
         "status":             session.status,
@@ -740,13 +772,13 @@ async def interview_end(session_id: str):
             "communication": avg_communication,
             "overall":       avg_overall,
         },
-        "questions":  [q.model_dump() for q in session.questions],
-        "answers":    [a.model_dump() for a in answers],
-        "started_at": session.started_at,
-        "ended_at":   session.ended_at,
+        "questions":            [q.model_dump() for q in session.questions],
+        "answers":              [a.model_dump() for a in answers],
+        "conversation_history": session.conversation_history,
+        "follow_up_counts":     session.follow_up_counts,
+        "started_at":           session.started_at,
+        "ended_at":             session.ended_at,
     }
-
-    return response
 
 
 @app.post("/api/interview/{session_id}/end-with-review")
@@ -805,11 +837,13 @@ async def interview_end_with_review(session_id: str, body: CoachReviewRequest):
             "communication": avg_communication,
             "overall":       avg_overall,
         },
-        "questions":    [q.model_dump() for q in session.questions],
-        "answers":      [a.model_dump() for a in answers],
-        "started_at":   session.started_at,
-        "ended_at":     session.ended_at,
-        "coach_review": coach_review_dict,
+        "questions":            [q.model_dump() for q in session.questions],
+        "answers":              [a.model_dump() for a in answers],
+        "conversation_history": session.conversation_history,
+        "follow_up_counts":     session.follow_up_counts,
+        "started_at":           session.started_at,
+        "ended_at":             session.ended_at,
+        "coach_review":         coach_review_dict,
     }
 
 
