@@ -19,4 +19,22 @@ public interface InterviewSessionMapper {
     void updateStatus(@Param("id") Long id,
                       @Param("status") String status,
                       @Param("endedAt") LocalDateTime endedAt);
+
+    InterviewSession findBySessionId(@Param("sessionId") String sessionId);
+
+    List<InterviewSession> findByUserIdAndStatus(@Param("userId") Long userId,
+                                                 @Param("status") String status);
+
+    void updateConversation(@Param("id") Long id,
+                            @Param("conversation") String conversation,
+                            @Param("questionCount") int questionCount);
+
+    void updateReview(@Param("id") Long id,
+                      @Param("review") String review);
+
+    void updateEnd(@Param("id") Long id,
+                   @Param("status") String status,
+                   @Param("endedAt") LocalDateTime endedAt,
+                   @Param("review") String review,
+                   @Param("conversation") String conversation);
 }

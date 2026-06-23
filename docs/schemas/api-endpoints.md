@@ -740,6 +740,242 @@ Return the most recent agent run records across all agents, ordered by `created_
 
 ---
 
+### Interview
+
+The interview system runs as a multi-turn mock interview session.  Spring Boot (`/api/interviews/*`) owns DB persistence; the Python agent service (`/api/interview/*`) owns in-memory session state and Claude calls.  The Python `session_id` (UUID) is the path variable used across all subsequent calls.
+
+---
+
+#### `POST /api/interviews/start`  *(Spring Boot)*
+
+Start a new interview session.  Loads the resume and JD from the database, delegates to the agent service to build the question set and return the first question, and persists a new `interview_sessions` row.
+
+**Request** — `application/json`
+
+```json
+{
+  "resumeId":    1,
+  "jdId":        2,
+  "numQuestions": 5
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `resumeId` | Long | yes | ID from `POST /api/resumes/parse` |
+| `jdId` | Long | yes | ID from `POST /api/jds/parse` |
+| `numQuestions` | Integer | no | Defaults to `5`; distribution is 60% technical / 40% behavioral |
+
+**Response 200**
+
+```json
+{
+  "db_id":           3,
+  "session_id":      "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "question":        "Tell me about a time you had to debug a production issue under pressure.",
+  "question_number": 1,
+  "total_questions": 5,
+  "type":            "behavioral",
+  "difficulty":      "medium"
+}
+```
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `db_id` | Long | Primary key of the `interview_sessions` row — use for DB lookups |
+| `session_id` | string (UUID) | Python session identifier — use as path variable for all subsequent calls |
+| `question` | string | First interview question text |
+| `question_number` | int | Always `1` on start |
+| `total_questions` | int | Total questions in this session |
+| `type` | string | `"technical"` or `"behavioral"` |
+| `difficulty` | string | `"easy"`, `"medium"`, or `"hard"` |
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | `resumeId` or `jdId` not found | (empty body) |
+| 500 | Agent service unreachable or question RAG failure | `{"error": "<message>"}` |
+
+---
+
+#### `POST /api/interviews/{sessionId}/answer`  *(Spring Boot)*
+
+Submit a candidate answer for the currently active question.  The agent service evaluates the answer, decides the next action (`follow_up`, `re_answer`, or `next_question`), and updates conversation history.  Spring Boot persists the updated conversation to the DB.
+
+**Path parameter:** `sessionId` — the Python UUID from `POST /api/interviews/start`
+
+**Request** — `application/json`
+
+```json
+{
+  "answer": "We were seeing 500ms latency spikes on our payments service..."
+}
+```
+
+**Response 200 — mid-session**
+
+```json
+{
+  "evaluation": {
+    "relevance_score":     8.0,
+    "depth_score":         7.0,
+    "communication_score": 9.0,
+    "overall_score":       7.9,
+    "strengths":           ["Clear STAR structure", "Concrete metrics"],
+    "improvements":        ["Add more on root cause analysis"],
+    "follow_up":           "What monitoring tools did you use?",
+    "next_action":         "next_question"
+  },
+  "next_action":          "next_question",
+  "next_content":         "Walk me through how you would design a URL shortener.",
+  "question_number":      2,
+  "total_questions":      5,
+  "follow_up_count":      0,
+  "conversation_history": [
+    { "role": "candidate",   "content": "We were seeing 500ms...", "turn_number": 1 },
+    { "role": "interviewer", "content": "Walk me through...",      "turn_number": 2 }
+  ],
+  "is_complete": false
+}
+```
+
+**Response 200 — session exhausted**
+
+```json
+{
+  "next_action":  "done",
+  "is_complete":  true,
+  "message":      "Interview complete. Call POST /end for your review."
+}
+```
+
+**`next_action` values**
+
+| Value | Meaning | `next_content` |
+|-------|---------|----------------|
+| `next_question` | Answer was strong enough (overall ≥ 7) or follow-up cap reached | Next main question text |
+| `follow_up` | Answer was on-topic but lacked depth (depth < 5) | Follow-up probe question |
+| `re_answer` | Answer was off-topic (relevance < 5) | Re-prompt repeating the question |
+| `done` | All questions exhausted | `null` |
+
+**Follow-up cap:** at most 2 follow-up probes per main question; the 3rd answer always advances regardless of score.
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | `sessionId` not found | (empty body) |
+| 409 | Session already completed | `{"error": "Session is already completed"}` |
+| 500 | Agent service evaluation failure | `{"error": "<message>"}` |
+
+---
+
+#### `GET /api/interviews/{sessionId}`  *(Spring Boot)*
+
+Retrieve the current state of a session: DB metadata merged with the live agent-service state.
+
+**Path parameter:** `sessionId` — Python UUID
+
+**Response 200**
+
+```json
+{
+  "db_id":          3,
+  "session_id":     "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "status":         "active",
+  "question_count": 2,
+  "started_at":     "2026-06-22T14:30:00",
+  "ended_at":       null,
+  "agent_state": {
+    "session_id":             "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+    "jd_title":               "Senior Backend Engineer",
+    "status":                 "active",
+    "questions_completed":    2,
+    "current_question":       { "text": "Walk me through...", "type": "technical", "difficulty": "medium" },
+    "total_questions":        5,
+    "current_question_index": 3,
+    "questions_asked":        [ { "question_number": 1, "text": "...", "type": "behavioral", "difficulty": "medium" }, "..." ],
+    "answers":                [ /* AnswerEvaluation objects */ ],
+    "conversation_history":   [ /* turn objects */ ],
+    "follow_up_counts":       { "0": 1 },
+    "started_at":             "2026-06-22T14:30:00.000Z",
+    "ended_at":               null
+  }
+}
+```
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | `sessionId` not found | (empty body) |
+| 500 | Agent service unreachable | `{"error": "<message>"}` |
+
+---
+
+#### `POST /api/interviews/{sessionId}/end`  *(Spring Boot)*
+
+Mark the session complete, retrieve the full summary from the agent service, and persist the final state (status, conversation history, review JSON) to the DB.
+
+**Path parameter:** `sessionId` — Python UUID
+
+**Request** — no body
+
+**Response 200**
+
+```json
+{
+  "session_id":         "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "jd_title":           "Senior Backend Engineer",
+  "status":             "completed",
+  "total_questions":    5,
+  "questions_answered": 5,
+  "average_scores": {
+    "relevance":     7.4,
+    "depth":         6.8,
+    "communication": 8.1,
+    "overall":       7.3
+  },
+  "questions": [ /* InterviewQuestion objects */ ],
+  "answers": [
+    {
+      "question":            "Tell me about a time...",
+      "answer":              "We were seeing 500ms latency...",
+      "relevance_score":     8.0,
+      "depth_score":         7.0,
+      "communication_score": 9.0,
+      "overall_score":       7.9,
+      "strengths":           ["Clear STAR structure"],
+      "improvements":        ["Add root cause detail"],
+      "follow_up":           "What monitoring tools did you use?"
+    }
+  ],
+  "conversation_history": [ /* full ordered turn log */ ],
+  "follow_up_counts":     { "0": 1, "2": 0 },
+  "started_at":           "2026-06-22T14:30:00.000Z",
+  "ended_at":             "2026-06-22T14:52:14.000Z"
+}
+```
+
+**DB updates on success**
+
+| Column | Value |
+|--------|-------|
+| `status` | `"completed"` |
+| `ended_at` | current timestamp |
+| `conversation` | full `conversation_history` JSON array |
+| `review` | full response JSON (summary + scores) |
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | `sessionId` not found | (empty body) |
+| 500 | Agent service failure | `{"error": "<message>"}` |
+
+---
+
 ## Cross-Service Flow
 
 ```
@@ -754,6 +990,10 @@ Main Service :8080
   │  POST /api/workflow/full      (JSON: resumeId + jdId)  ──────┤
   │  GET  /api/workflow/full/{id} (DB + agent-service calls) ────┤
   │  GET  /api/workflow/status/{threadId}  ──────────────────────┤
+  │  POST /api/interviews/start            ──────────────────────┤
+  │  POST /api/interviews/{id}/answer      ──────────────────────┤
+  │  GET  /api/interviews/{id}             ──────────────────────┤
+  │  POST /api/interviews/{id}/end         ──────────────────────┤
   │  GET  /api/match/{id}         (DB lookup, no agent call)     │
   │  GET  /api/agent-runs/recent  (DB lookup, no agent call)     │
   │                                                               │
@@ -767,6 +1007,10 @@ Agent Service :8001  ◄──────────────────�
   ├── POST /api/pipeline/run          (multipart: file + jd_text)
   ├── POST /api/workflow/run          (JSON: file path + jd text)
   ├── GET  /api/workflow/status/{id}  (checkpoint poll, read-only)
+  ├── POST /api/interview/start       (JSON: jd + resume + num_questions)
+  ├── POST /api/interview/{id}/answer (JSON: answer)
+  ├── GET  /api/interview/{id}        (live session state)
+  ├── POST /api/interview/{id}/end    (summary + average scores)
   ├── GET  /api/workflow/visualize    (Mermaid JSON)
   └── GET  /api/workflow/visualize/html (rendered diagram page)
   │

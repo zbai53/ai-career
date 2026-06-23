@@ -112,12 +112,12 @@
 
 > Multi-turn mock interviews powered by a knowledge base.
 
-- [ ] **Day 28:** Set up Qdrant locally. Prepare interview question dataset: 200+ behavioral questions (STAR format) + 100+ technical questions (categorized by role and difficulty). Source from public datasets.
-- [ ] **Day 29:** Embed questions using `sentence-transformers` (e.g., `all-MiniLM-L6-v2`). Index into Qdrant with metadata (type, difficulty, role, topic).
-- [ ] **Day 30:** Implement Interview Agent: given a JD, retrieve relevant questions via RAG. Ask one question at a time. Maintain conversation state in LangGraph. Support 5-question default session.
-- [ ] **Day 31:** Implement multi-turn logic: evaluate user's answer, generate follow-up or next question. Track which questions have been asked (no repeats).
-- [ ] **Day 32:** Implement Coach Agent: after interview ends, analyze the full conversation. Score each answer on: STAR completeness, technical depth, communication clarity. Output structured review.
-- [ ] **Day 33:** Spring Boot endpoints: `POST /api/interview/start`, `POST /api/interview/{id}/turn`, `POST /api/interview/{id}/end`. Persist conversation and review to DB.
+- [x] **Day 28:** Set up Qdrant locally. Prepared 20-question in-memory bank (8 behavioral, 12 technical) with role/difficulty/topic metadata. Implemented `index_questions()` and `search_questions()` in `app/rag/question_index.py`.
+- [x] **Day 29:** Embedded questions using `sentence-transformers` (`all-MiniLM-L6-v2`, 384-dim). Indexed into Qdrant `interview_questions` collection. Wired `POST /api/rag/index` and `POST /api/rag/search` agent-service endpoints.
+- [x] **Day 30:** Implemented `InterviewAgent` with RAG-backed `start_session()`, `ask_next()`, and `evaluate_answer()`. Session state tracked in `InterviewSessionData` (Pydantic). Multi-turn `process_turn()` orchestrates evaluate → decide → respond. Added `POST /api/interview/start`, `POST /api/interview/{id}/answer`, `GET /api/interview/{id}`, `POST /api/interview/{id}/end` to agent service.
+- [x] **Day 31:** Implemented multi-turn decision logic (`_decide_next_action`): overall ≥ 7 → `next_question`; relevance < 5 → `re_answer`; depth < 5 → `follow_up`. Added follow-up cap (max 2 per question). Full `conversation_history` with `turn_number` tracking persisted in session.
+- [x] **Day 32:** Implemented `CoachAgent`: per-answer STAR analysis, technical depth scoring, communication review, and readiness verdict (`yes`/`almost`/`needs_more_practice`). Wired into `POST /api/interview/{id}/end-with-review`. Added `InterviewService` in Spring Boot; `InterviewController` delegates to it. DB persistence via `InterviewSessionMapper` (`session_id`, conversation JSONB, review JSONB). Flyway migration V4 adds `session_id` column.
+- [ ] **Day 33:** Spring Boot endpoint refinements, validation, error handling polish.
 - [ ] **Day 34:** Add ATS keyword library to Qdrant: industry → role → keywords. Match Agent can now query this for better keyword coverage scoring.
 - [ ] **Day 35:** End-to-end test: upload resume → input JD → match → rewrite → interview → review. Fix integration issues. Buffer day.
 

@@ -304,6 +304,145 @@ public class AgentServiceClient {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Interview — multi-turn mock interview
+    // -----------------------------------------------------------------------
+
+    /**
+     * Start a new mock interview session on the agent-service.
+     *
+     * @param resumeJson  parsedData JSON string from the resumes table
+     * @param jdJson      parsedData JSON string from the job_descriptions table
+     * @param numQuestions number of questions to generate (default 5)
+     * @return raw JSON: { session_id, question, question_number, total_questions, type, difficulty }
+     */
+    public String startInterview(String resumeJson, String jdJson, int numQuestions) {
+        String endpoint = agentServiceUrl + "/api/interview/start";
+
+        JsonNode resumeNode;
+        JsonNode jdNode;
+        try {
+            resumeNode = objectMapper.readTree(resumeJson);
+            jdNode     = objectMapper.readTree(jdJson);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to parse stored JSON before sending to agent-service: " + e.getMessage(), e);
+        }
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("resume",        resumeNode);
+        body.put("jd",            jdNode);
+        body.put("num_questions", numQuestions);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+        try {
+            ResponseEntity<String> response = agentRestTemplate.postForEntity(endpoint, request, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException(
+                        "Interview start failed with status " + response.getStatusCode() + ": " + response.getBody());
+            }
+            return response.getBody();
+        } catch (ResourceAccessException e) {
+            throw new RuntimeException(
+                    "Could not reach agent-service at " + endpoint + " (connection/timeout): " + e.getMessage(), e);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            throw new RuntimeException(
+                    "Interview start request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
+        }
+    }
+
+    /**
+     * Submit an answer for the active interview question and receive the next action.
+     *
+     * @param sessionId Python-generated UUID from /api/interview/start
+     * @param answer    candidate's answer text
+     * @return raw JSON with evaluation, next_action, next_content, conversation_history, is_complete
+     */
+    public String answerInterview(String sessionId, String answer) {
+        String endpoint = agentServiceUrl + "/api/interview/" + sessionId + "/answer";
+
+        Map<String, Object> body = new HashMap<>();
+        body.put("answer", answer);
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
+
+        try {
+            ResponseEntity<String> response = agentRestTemplate.postForEntity(endpoint, request, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException(
+                        "Interview answer failed with status " + response.getStatusCode() + ": " + response.getBody());
+            }
+            return response.getBody();
+        } catch (ResourceAccessException e) {
+            throw new RuntimeException(
+                    "Could not reach agent-service at " + endpoint + " (connection/timeout): " + e.getMessage(), e);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            throw new RuntimeException(
+                    "Interview answer request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
+        }
+    }
+
+    /**
+     * Retrieve the current state of an interview session from the agent-service.
+     *
+     * @param sessionId Python-generated UUID
+     * @return raw JSON with session status, questions, answers, and conversation_history
+     */
+    public String getInterviewStatus(String sessionId) {
+        String endpoint = agentServiceUrl + "/api/interview/" + sessionId;
+
+        try {
+            ResponseEntity<String> response = restTemplate.getForEntity(endpoint, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException(
+                        "Interview status failed with status " + response.getStatusCode() + ": " + response.getBody());
+            }
+            return response.getBody();
+        } catch (ResourceAccessException e) {
+            throw new RuntimeException(
+                    "Could not reach agent-service at " + endpoint + " (connection/timeout): " + e.getMessage(), e);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            throw new RuntimeException(
+                    "Interview status request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
+        }
+    }
+
+    /**
+     * End an interview session on the agent-service and retrieve the full summary.
+     *
+     * @param sessionId Python-generated UUID
+     * @return raw JSON with session summary, average_scores, and conversation_history
+     */
+    public String endInterview(String sessionId) {
+        String endpoint = agentServiceUrl + "/api/interview/" + sessionId + "/end";
+
+        HttpHeaders headers = new HttpHeaders();
+        headers.setContentType(MediaType.APPLICATION_JSON);
+
+        HttpEntity<Void> request = new HttpEntity<>(headers);
+
+        try {
+            ResponseEntity<String> response = agentRestTemplate.postForEntity(endpoint, request, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException(
+                        "Interview end failed with status " + response.getStatusCode() + ": " + response.getBody());
+            }
+            return response.getBody();
+        } catch (ResourceAccessException e) {
+            throw new RuntimeException(
+                    "Could not reach agent-service at " + endpoint + " (connection/timeout): " + e.getMessage(), e);
+        } catch (HttpClientErrorException | HttpServerErrorException e) {
+            throw new RuntimeException(
+                    "Interview end request failed (" + e.getStatusCode() + "): " + e.getResponseBodyAsString(), e);
+        }
+    }
+
     private MediaType resolveMediaType(String fileName) {
         if (fileName != null && fileName.toLowerCase().endsWith(".pdf")) {
             return MediaType.APPLICATION_PDF;

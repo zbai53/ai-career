@@ -9,6 +9,7 @@
         <result column="user_id"        property="userId"/>
         <result column="jd_id"          property="jdId"/>
         <result column="resume_id"      property="resumeId"/>
+        <result column="session_id"     property="sessionId"/>
         <result column="status"         property="status"/>
         <result column="question_count" property="questionCount"/>
         <result column="conversation"   property="conversation"/>
@@ -20,22 +21,29 @@
     <insert id="insert" parameterType="com.aicareer.model.entity.InterviewSession"
             useGeneratedKeys="true" keyProperty="id">
         INSERT INTO interview_sessions
-            (user_id, jd_id, resume_id, status, question_count,
+            (user_id, jd_id, resume_id, session_id, status, question_count,
              conversation, review, started_at, ended_at)
         VALUES
-            (#{userId}, #{jdId}, #{resumeId}, #{status}, #{questionCount},
+            (#{userId}, #{jdId}, #{resumeId}, #{sessionId}, #{status}, #{questionCount},
              #{conversation}::jsonb, #{review}::jsonb, #{startedAt}, #{endedAt})
     </insert>
 
     <select id="findById" parameterType="long" resultMap="interviewSessionResultMap">
-        SELECT id, user_id, jd_id, resume_id, status, question_count,
+        SELECT id, user_id, jd_id, resume_id, session_id, status, question_count,
                conversation::text, review::text, started_at, ended_at
         FROM interview_sessions
         WHERE id = #{id}
     </select>
 
+    <select id="findBySessionId" parameterType="string" resultMap="interviewSessionResultMap">
+        SELECT id, user_id, jd_id, resume_id, session_id, status, question_count,
+               conversation::text, review::text, started_at, ended_at
+        FROM interview_sessions
+        WHERE session_id = #{sessionId}
+    </select>
+
     <select id="findByUserId" parameterType="long" resultMap="interviewSessionResultMap">
-        SELECT id, user_id, jd_id, resume_id, status, question_count,
+        SELECT id, user_id, jd_id, resume_id, session_id, status, question_count,
                conversation::text, review::text, started_at, ended_at
         FROM interview_sessions
         WHERE user_id = #{userId}
@@ -46,6 +54,37 @@
         UPDATE interview_sessions
         SET status   = #{status},
             ended_at = #{endedAt}
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateConversation">
+        UPDATE interview_sessions
+        SET conversation   = #{conversation}::jsonb,
+            question_count = #{questionCount}
+        WHERE id = #{id}
+    </update>
+
+    <select id="findByUserIdAndStatus" resultMap="interviewSessionResultMap">
+        SELECT id, user_id, jd_id, resume_id, session_id, status, question_count,
+               conversation::text, review::text, started_at, ended_at
+        FROM interview_sessions
+        WHERE user_id = #{userId}
+          AND status  = #{status}
+        ORDER BY started_at DESC
+    </select>
+
+    <update id="updateReview">
+        UPDATE interview_sessions
+        SET review = #{review}::jsonb
+        WHERE id = #{id}
+    </update>
+
+    <update id="updateEnd">
+        UPDATE interview_sessions
+        SET status       = #{status},
+            ended_at     = #{endedAt},
+            review       = #{review}::jsonb,
+            conversation = #{conversation}::jsonb
         WHERE id = #{id}
     </update>
 

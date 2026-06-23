@@ -8,6 +8,7 @@ public class InterviewSession {
     private Long userId;
     private Long jdId;
     private Long resumeId;
+    private String sessionId;     // Python-generated UUID
     private String status;
     private Integer questionCount;
     private String conversation;  // JSON stored as text
@@ -28,6 +29,9 @@ public class InterviewSession {
 
     public Long getResumeId() { return resumeId; }
     public void setResumeId(Long resumeId) { this.resumeId = resumeId; }
+
+    public String getSessionId() { return sessionId; }
+    public void setSessionId(String sessionId) { this.sessionId = sessionId; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
