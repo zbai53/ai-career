@@ -33,3 +33,15 @@ class MatchResult(BaseModel):
         default_factory=list,
         description="JD keywords found in the resume raw text",
     )
+    ats_present: list[str] = Field(
+        default_factory=list,
+        description="Industry-standard ATS keywords found in the resume",
+    )
+    ats_missing: list[str] = Field(
+        default_factory=list,
+        description="Industry-standard ATS keywords absent from the resume",
+    )
+    ats_coverage_percent: float = Field(
+        default=0.0,
+        description="Percentage of industry-standard ATS keywords present in the resume (0–100)",
+    )

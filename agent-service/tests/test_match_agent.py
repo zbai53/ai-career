@@ -460,6 +460,43 @@ class TestMatchAgent:
         assert isinstance(agent_run["token_count"], int)
         assert "created_at" in agent_run
 
+    def test_ats_keywords_included_in_result(self, mock_cls):
+        """
+        match() must populate ats_present, ats_missing, and ats_coverage_percent.
+
+        Uses a backend_engineer JD so _infer_ats_role maps to technology/backend_engineer
+        (25 keywords in the library).  The resume raw_text contains "Python" and "Docker",
+        which are both in that ATS list, so ats_present must contain them and
+        ats_coverage_percent must be > 0.  ats_missing must contain keywords absent from
+        the resume text.
+
+        find_missing_keywords is pure Python (no Qdrant) — no extra mocking needed.
+        """
+        mock_cls.return_value.messages.create.side_effect = _mock_create_side_effects()
+        agent = MatchAgent()
+        resume = _make_resume(
+            ["Python", "Docker"],
+            raw_text="Python Docker microservices unit testing experience",
+        )
+        jd = _make_jd(["Python", "Docker"], keywords=["Python"])
+        # Override the JD title so _infer_ats_role picks backend_engineer
+        jd.title = "Backend Engineer"
+
+        result, _ = agent.match(resume, jd)
+
+        assert isinstance(result.ats_present, list)
+        assert isinstance(result.ats_missing, list)
+        assert isinstance(result.ats_coverage_percent, float)
+        # "Python" and "Docker" are in the technology/backend_engineer keyword list
+        assert "Python" in result.ats_present
+        assert "Docker" in result.ats_present
+        # There should be missing keywords (we only have a few skills in the resume)
+        assert len(result.ats_missing) > 0
+        # Coverage is > 0 (we matched some keywords) and < 100 (we missed most)
+        assert 0.0 < result.ats_coverage_percent < 100.0
+        # present + missing = total ATS keyword count for this role
+        assert len(result.ats_present) + len(result.ats_missing) == 25
+
     def test_gap_analysis_fallback_on_bad_json(self, mock_cls):
         """If Claude returns invalid JSON twice, match() still returns a MatchResult."""
         def _bad_resp():

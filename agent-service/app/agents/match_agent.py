@@ -12,6 +12,7 @@ from app.agents.prompt_templates import GAP_ANALYSIS_PROMPT
 from app.models.job_description import JDSkillRequirement, ParsedJobDescription
 from app.models.match_result import MatchResult
 from app.models.resume import ParsedResume, ResumeExperience
+from app.rag.ats_keywords import find_missing_keywords
 from app.utils.agent_logger import log_agent_run
 
 logger = logging.getLogger(__name__)
@@ -460,6 +461,46 @@ def _compute_keyword_score(
     return score, matched
 
 
+def _infer_ats_role(title: str, industry: str | None) -> tuple[str, str]:
+    """
+    Map a JD title and industry to the nearest ATS keyword library keys.
+
+    Returns (ats_industry, ats_role) using simple keyword matching with safe
+    fallbacks so that find_missing_keywords always receives valid-ish keys
+    (an unknown combination returns an empty keyword list, which is fine).
+    """
+    title_lower = title.lower()
+    industry_lower = (industry or "").lower()
+
+    # Industry mapping
+    if any(k in industry_lower for k in ("finance", "banking", "quant", "investment")):
+        ats_industry = "finance"
+    elif any(k in industry_lower for k in ("health", "medical", "clinical", "pharma")):
+        ats_industry = "healthcare"
+    else:
+        ats_industry = "technology"
+
+    # Role mapping from JD title
+    if "data scien" in title_lower:
+        ats_role = "data_scientist"
+    elif any(k in title_lower for k in ("devops", "site reliability", " sre", "platform engineer")):
+        ats_role = "devops_engineer"
+    elif any(k in title_lower for k in ("frontend", "front-end", "front end", "ui engineer", "ui developer")):
+        ats_role = "frontend_developer"
+    elif any(k in title_lower for k in ("fullstack", "full-stack", "full stack")):
+        ats_role = "fullstack_developer"
+    elif any(k in title_lower for k in ("backend", "back-end", "back end", "server-side", "api engineer")):
+        ats_role = "backend_engineer"
+    elif ats_industry == "finance":
+        ats_role = "quantitative_analyst"
+    elif ats_industry == "healthcare":
+        ats_role = "health_informatics"
+    else:
+        ats_role = "backend_engineer"  # safe default for generic "software engineer" titles
+
+    return ats_industry, ats_role
+
+
 _GAP_ANALYSIS_SCHEMA = json.dumps(
     {
         "type": "object",
@@ -525,6 +566,10 @@ class MatchAgent:
         # --- Dimension 3: keyword score (pure Python) ---
         keyword_score, matched_kw = _compute_keyword_score(resume, jd)
 
+        # --- ATS industry-standard keyword coverage (pure Python, no Qdrant) ---
+        ats_industry, ats_role = _infer_ats_role(jd.title, jd.industry)
+        ats_result = find_missing_keywords(resume.raw_text, ats_industry, ats_role)
+
         # --- Weighted overall ---
         overall_score = (
             skill_score * 0.45
@@ -556,6 +601,9 @@ class MatchAgent:
             overall_assessment=gap.get("overall_assessment", ""),
             matched_skills=matched_skills,
             matched_keywords=matched_kw,
+            ats_present=ats_result["present"],
+            ats_missing=ats_result["missing"],
+            ats_coverage_percent=ats_result["coverage_percent"],
         )
 
         agent_run = log_agent_run(
