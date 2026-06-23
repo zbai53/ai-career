@@ -5,6 +5,22 @@
 
 ---
 
+## Day 32 — 2025-06-22 (Phase 5: Interview + Coach Agents + RAG)
+
+**Completed:**
+- Created Spring Boot InterviewController: start, answer, status, end endpoints
+- Created InterviewService wrapping agent calls + DB persistence
+- Updated InterviewSessionMapper with conversation/review update methods
+- AgentServiceClient: 4 new methods for interview flow with 30s timeouts
+- Full chain verified: Spring Boot → Python interview → Claude evaluation → DB persistence
+- Interview sessions saved to interview_sessions table with conversation JSONB
+- Multi-turn re_answer working through Spring Boot (off-topic answer triggers retry)
+- Updated API docs and roadmap
+
+**Blockers:** None
+
+**Next:** Day 33 — ATS keyword library in Qdrant, end-to-end full pipeline test
+
 ## Day 31 — 2025-06-22 (Phase 5: Interview + Coach Agents + RAG)
 
 **Completed:**
