@@ -172,3 +172,23 @@ export function useGetMatch(id: number | null) {
     enabled: id !== null,
   })
 }
+
+/** GET /api/rewrite/{id} — Spring Boot entity; rewriteData is a JSON string */
+export interface RewriteEntity {
+  id: number
+  rewriteData: string        // JSON-encoded RewriteResult from Python agent
+  fidelityStatus: string
+  fidelityScore: number | null
+  rewriteAttempts: number
+}
+
+export function useGetRewrite(id: number | null) {
+  return useQuery<RewriteEntity, Error>({
+    queryKey: ['rewrite', id],
+    queryFn: async () => {
+      const { data } = await client.get<RewriteEntity>(`/rewrite/${id}`)
+      return data
+    },
+    enabled: id !== null,
+  })
+}
