@@ -38,13 +38,34 @@ export interface RewriteResult {
   rewriteAttempts: number
 }
 
+/**
+ * Response from POST /api/interviews/start.
+ * Keys are snake_case because the controller returns a plain Java Map.
+ */
+export interface StartInterviewResponse {
+  db_id: number
+  session_id: string
+  question: string
+  question_number: number
+  total_questions: number
+  type: string
+  difficulty: string
+}
+
+/**
+ * Response from GET /api/interviews/{sessionId}.
+ * Keys are snake_case (plain Java Map). `agent_state` is the full Python
+ * interview session state and contains conversation_history, questions,
+ * answers, review, etc.
+ */
 export interface InterviewSession {
-  id: number
-  sessionId: string
+  db_id: number
+  session_id: string
   status: string
-  conversation: Record<string, unknown>
-  /** JSONB CoachReview — populated after POST /interviews/{id}/end-with-review */
-  review: Record<string, unknown> | null
+  question_count: number
+  started_at: string
+  ended_at: string | null
+  agent_state: Record<string, unknown>
 }
 
 // ---------------------------------------------------------------------------
@@ -102,22 +123,25 @@ export function useRewrite() {
 /** POST /api/interviews/start */
 export function useStartInterview() {
   return useMutation<
-    InterviewSession,
+    StartInterviewResponse,
     Error,
-    { resumeId: number; jdId: number }
+    { resumeId: number; jdId: number; numQuestions?: number }
   >({
     mutationFn: async (payload) => {
-      const { data } = await client.post<InterviewSession>('/interviews/start', payload)
+      const { data } = await client.post<StartInterviewResponse>('/interviews/start', payload)
       return data
     },
   })
 }
 
-/** POST /api/interviews/{sessionId}/answer */
+/**
+ * POST /api/interviews/{sessionId}/answer
+ * Returns the raw Python agent state (snake_case keys).
+ */
 export function useAnswerInterview(sessionId: string) {
-  return useMutation<InterviewSession, Error, { answer: string }>({
+  return useMutation<Record<string, unknown>, Error, { answer: string }>({
     mutationFn: async (payload) => {
-      const { data } = await client.post<InterviewSession>(
+      const { data } = await client.post<Record<string, unknown>>(
         `/interviews/${sessionId}/answer`,
         payload
       )
@@ -126,11 +150,14 @@ export function useAnswerInterview(sessionId: string) {
   })
 }
 
-/** POST /api/interviews/{sessionId}/end */
+/**
+ * POST /api/interviews/{sessionId}/end
+ * Returns the raw Python agent state including the coach review.
+ */
 export function useEndInterview(sessionId: string) {
-  return useMutation<InterviewSession, Error, void>({
+  return useMutation<Record<string, unknown>, Error, void>({
     mutationFn: async () => {
-      const { data } = await client.post<InterviewSession>(
+      const { data } = await client.post<Record<string, unknown>>(
         `/interviews/${sessionId}/end`
       )
       return data
@@ -198,8 +225,8 @@ export function useGetRewrite(id: number | null) {
   })
 }
 
-/** GET /api/interviews/{id} — Spring Boot entity; conversation is JSONB InterviewSessionData */
-export function useGetInterview(id: number | null) {
+/** GET /api/interviews/{sessionId} — sessionId is the UUID string */
+export function useGetInterview(id: string | null) {
   return useQuery<InterviewSession, Error>({
     queryKey: ['interview', id],
     queryFn: async () => {

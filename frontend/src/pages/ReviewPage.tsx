@@ -241,11 +241,12 @@ export default function ReviewPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
 
-  const dbId = id === 'latest' ? null : Number(id)
-  const { data: entity, isPending, isError } = useGetInterview(dbId)
+  // id is the UUID session_id — use it directly (no numeric conversion)
+  const sessionId = id === 'latest' ? null : (id ?? null)
+  const { data: entity, isPending, isError } = useGetInterview(sessionId)
 
   // ---- Guards ----
-  if (!dbId) {
+  if (!sessionId) {
     return (
       <EmptyState
         icon={<Star className="h-8 w-8" />}
@@ -277,8 +278,11 @@ export default function ReviewPage() {
     )
   }
 
-  const review  = parseReview(entity.review)
-  const session = parseSession(entity.conversation)
+  // agent_state is the full Python session state; it contains both the coach
+  // review (under the "review" key) and the conversation/question data.
+  const agentState = entity.agent_state ?? {}
+  const review  = parseReview(agentState.review as Record<string, unknown> | null)
+  const session = parseSession(agentState as Record<string, unknown>)
 
   if (!review) {
     return (
@@ -287,7 +291,7 @@ export default function ReviewPage() {
         title="Review not ready"
         description="The coach review hasn't been generated yet. End the interview to receive AI coaching feedback."
         actionLabel="Return to interview"
-        onAction={() => navigate(`/interview/${dbId}`)}
+        onAction={() => navigate(`/interview/${sessionId}`)}
       />
     )
   }

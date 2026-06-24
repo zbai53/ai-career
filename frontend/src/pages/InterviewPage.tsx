@@ -133,24 +133,24 @@ function formatTime(iso: string): string {
 // ---------------------------------------------------------------------------
 
 export default function InterviewPage() {
-  const { id } = useParams<{ id: string }>()
+  const { id } = useParams<{ id: string }>()   // UUID string from the URL
   const navigate = useNavigate()
 
-  const dbId = id === 'latest' ? null : Number(id)
-  const { data: entity, isPending: loadingSession, isError } = useGetInterview(dbId)
+  // id IS the UUID session_id — no numeric conversion
+  const { data: entity, isPending: loadingSession, isError } = useGetInterview(id ?? null)
 
-  // Parse session data from the JSONB `conversation` field
+  // Parse session data from the Python agent_state in the GET response
   const [sessionData, setSessionData] = useState<SessionData | null>(null)
 
   useEffect(() => {
-    if (entity?.conversation) {
-      const parsed = parseSession(entity.conversation)
+    if (entity?.agent_state) {
+      const parsed = parseSession(entity.agent_state)
       if (parsed) setSessionData(parsed)
     }
   }, [entity])
 
-  // We need the UUID session_id for mutations — fall back to entity.sessionId
-  const sessionUUID = sessionData?.session_id ?? entity?.sessionId ?? ''
+  // UUID for mutations is the URL param itself
+  const sessionUUID = id ?? ''
 
   const answerMutation = useAnswerInterview(sessionUUID)
   const endMutation    = useEndInterview(sessionUUID)
@@ -165,10 +165,10 @@ export default function InterviewPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [sessionData?.conversation_history.length, answerMutation.isPending])
 
-  // Update local session when mutation returns updated entity
-  function handleMutationSuccess(updated: typeof entity) {
-    if (!updated?.conversation) return
-    const parsed = parseSession(updated.conversation)
+  // Update local session when mutation returns updated Python agent state.
+  // Answer/end responses are the raw Python state (not wrapped), so parse directly.
+  function handleMutationSuccess(updated: Record<string, unknown>) {
+    const parsed = parseSession(updated)
     if (parsed) setSessionData(parsed)
   }
 
@@ -191,13 +191,13 @@ export default function InterviewPage() {
     endMutation.mutate(undefined, {
       onSuccess: (data) => {
         handleMutationSuccess(data)
-        navigate(`/review/${data.id}`)
+        navigate(`/review/${id}`)   // id is the UUID from URL params
       },
     })
   }
 
   // ---- Loading / error guards ----
-  if (!dbId) {
+  if (!id) {
     return (
       <EmptyState
         icon={<MessageSquare className="h-8 w-8" />}
@@ -310,7 +310,7 @@ export default function InterviewPage() {
             <Star className="mx-auto h-8 w-8 text-green-500" />
             <p className="font-semibold text-green-800">Interview Complete!</p>
             <button
-              onClick={() => navigate(`/review/${entity?.id}`)}
+              onClick={() => navigate(`/review/${id}`)}
               className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700"
             >
               View Review

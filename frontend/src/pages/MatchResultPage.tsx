@@ -109,11 +109,11 @@ export default function MatchResultPage() {
   function handleStartInterview() {
     if (!currentResumeId || !currentJDId) return
     startInterview.mutate(
-      { resumeId: currentResumeId, jdId: currentJDId },
+      { resumeId: currentResumeId, jdId: currentJDId, numQuestions: 5 },
       {
         onSuccess: (session) => {
-          setInterviewId(session.sessionId)
-          navigate(`/interview/${session.sessionId}`)
+          setInterviewId(session.session_id)
+          navigate(`/interview/${session.session_id}`)
         },
       }
     )
