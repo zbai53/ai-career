@@ -4,6 +4,23 @@
 > Re-upload this file to Claude Project Knowledge weekly (every Sunday).
 
 ---
+## Day 36 — 2025-06-23 (Phase 6: React Frontend)
+
+**Completed:**
+- Installed dependencies: axios, zustand, react-query, react-router-dom, recharts, lucide-react
+- Set up react-router with 8 lazy-loaded routes
+- Created Layout component with sidebar navigation + responsive design
+- Created API client (axios) with interceptors
+- Created Zustand stores: authStore, workflowStore
+- Created React Query hooks for all API endpoints
+- Built ResumeUploadPage with drag-and-drop FileUpload component, parse result summary
+- Built JDInputPage with text/URL input, parse result with skill badges
+
+**Blockers:** None
+
+**Next:** Day 37 — Match Results page with radar chart, Rewrite comparison page
+
+
 
 ## Phase 5 Complete — 2026-06-23
 
