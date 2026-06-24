@@ -80,8 +80,7 @@ function TypeBadge({ type }: { type: string }) {
   )
 }
 
-function EvaluationCard({ eval: ev }: { eval: AnswerEvaluation }) {
-  // Normalise arrays defensively — API fields can be missing on partial responses
+function EvaluationCard({ eval: ev }: { eval: EvaluationData }) {
   const strengths    = ev.strengths    ?? []
   const improvements = ev.improvements ?? []
 
@@ -137,15 +136,52 @@ function formatTime(iso: string): string {
 // Page
 // ---------------------------------------------------------------------------
 
-// Type for the local display message list (a subset of ConversationTurn)
-type DisplayMessage = { role: 'interviewer' | 'candidate'; content: string }
+// Subset of AnswerEvaluation that EvaluationCard needs — embedded into DisplayMessage
+type EvaluationData = {
+  relevance_score: number
+  depth_score: number
+  communication_score: number
+  overall_score: number
+  strengths: string[]
+  improvements: string[]
+}
 
-/** Extract a flat DisplayMessage list from a parsed session. */
+// Local display message — interviewer messages may carry an evaluation to show before the text
+type DisplayMessage = {
+  role: 'interviewer' | 'candidate'
+  content: string
+  evaluation?: EvaluationData
+}
+
+/** Build a DisplayMessage list from a parsed session, embedding evaluations into the
+ *  interviewer turn that follows each candidate answer. */
 function toDisplayMessages(session: SessionData): DisplayMessage[] {
-  return (session.conversation_history ?? []).map((t) => ({
-    role: t.role,
-    content: t.content,
-  }))
+  const history = session.conversation_history ?? []
+  const answers = session.answers ?? []
+  let candidateCount = 0
+  return history.map((t) => {
+    if (t.role === 'candidate') {
+      candidateCount++
+      return { role: 'candidate' as const, content: t.content }
+    }
+    // Attach the evaluation for the most-recent candidate answer (if any)
+    const evalIdx = candidateCount - 1
+    const ev = evalIdx >= 0 ? answers[evalIdx] : undefined
+    return {
+      role: 'interviewer' as const,
+      content: t.content,
+      evaluation: ev
+        ? {
+            relevance_score:    ev.relevance_score,
+            depth_score:        ev.depth_score,
+            communication_score: ev.communication_score,
+            overall_score:      ev.overall_score,
+            strengths:          ev.strengths    ?? [],
+            improvements:       ev.improvements ?? [],
+          }
+        : undefined,
+    }
+  })
 }
 
 export default function InterviewPage() {
@@ -206,20 +242,68 @@ export default function InterviewPage() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [displayMessages.length, isWaitingForResponse])
 
-  // Sync display messages and session metadata from a successful mutation response,
-  // then clear the waiting state and start typewriter for the new interviewer message.
-  function handleMutationSuccess(updated: Record<string, unknown>) {
+  // Sync session metadata and, when called from an answer submission, append new turns
+  // to displayMessages without touching the existing history (append-only).
+  //
+  // fromAnswer = true  → one optimistic candidate message was appended before the call;
+  //                       slice it off and replace with real turns from the API response.
+  // fromAnswer = false → end-session call; no optimistic message; just update sessionData.
+  function handleMutationSuccess(updated: Record<string, unknown>, fromAnswer = false) {
     const parsed = parseSession(updated)
-    if (parsed) {
-      setSessionData(parsed)
-      const msgs = toDisplayMessages(parsed)
-      setDisplayMessages(msgs)
-      // If the last message is from the interviewer, animate it
-      const last = msgs[msgs.length - 1]
-      if (last?.role === 'interviewer') {
+    if (!parsed) {
+      setIsWaitingForResponse(false)
+      return
+    }
+
+    setSessionData(parsed)
+
+    if (fromAnswer) {
+      const newHistory = parsed.conversation_history ?? []
+      const newAnswers = parsed.answers ?? []
+
+      setDisplayMessages((prev) => {
+        // prev ends with the one optimistic candidate message we appended during submit.
+        // Everything before that is stable and must not change.
+        const preOptimisticCount = Math.max(0, prev.length - 1)
+        const kept = prev.slice(0, preOptimisticCount)
+
+        // Turns incoming from the API that we don't yet have displayed
+        const incoming = newHistory.slice(preOptimisticCount)
+
+        let candidateCount = kept.filter((m) => m.role === 'candidate').length
+        const appended: DisplayMessage[] = incoming.map((turn) => {
+          if (turn.role === 'candidate') {
+            candidateCount++
+            return { role: 'candidate' as const, content: turn.content }
+          }
+          const evalIdx = candidateCount - 1
+          const ev = evalIdx >= 0 ? newAnswers[evalIdx] : undefined
+          return {
+            role: 'interviewer' as const,
+            content: turn.content,
+            evaluation: ev
+              ? {
+                  relevance_score:     ev.relevance_score,
+                  depth_score:         ev.depth_score,
+                  communication_score: ev.communication_score,
+                  overall_score:       ev.overall_score,
+                  strengths:           ev.strengths    ?? [],
+                  improvements:        ev.improvements ?? [],
+                }
+              : undefined,
+          }
+        })
+
+        return [...kept, ...appended]
+      })
+
+      // Start typewriter if the last new turn is an interviewer message
+      const lastNew = newHistory[newHistory.length - 1]
+      if (lastNew?.role === 'interviewer') {
         setIsTyping(true)
       }
     }
+
     setIsWaitingForResponse(false)
   }
 
@@ -235,7 +319,7 @@ export default function InterviewPage() {
     answerMutation.mutate(
       { answer: text },
       {
-        onSuccess: (data) => handleMutationSuccess(data),
+        onSuccess: (data) => handleMutationSuccess(data, true),
         onError: () => {
           // Revert the optimistic message so the user can retry
           setIsWaitingForResponse(false)
@@ -253,7 +337,7 @@ export default function InterviewPage() {
     setShowEndDialog(false)
     endMutation.mutate(undefined, {
       onSuccess: (data) => {
-        handleMutationSuccess(data)
+        handleMutationSuccess(data, false)
         navigate(`/review/${id}`)   // id is the UUID from URL params
       },
     })
@@ -307,9 +391,6 @@ export default function InterviewPage() {
   const totalQ      = questions.length
   const answeredQ   = answers.length
 
-  // Map the nth candidate turn to its evaluation (0-indexed)
-  const evalByTurnIdx = new Map(answers.map((ev, i) => [i, ev]))
-
   // Index of the latest interviewer message — only that one gets typewriter animation
   const latestInterviewerIdx = displayMessages.reduce(
     (last, t, i) => (t.role === 'interviewer' ? i : last), -1
@@ -357,22 +438,19 @@ export default function InterviewPage() {
       {/* ── Chat area ───────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto bg-gray-50 px-4 py-6 space-y-4">
         {displayMessages.map((turn, idx) => {
-          const isCandidateTurn = turn.role === 'candidate'
-          const isLatestInterviewer = !isCandidateTurn && idx === latestInterviewerIdx
-          // Count how many candidate messages appeared BEFORE this index to get
-          // the 0-based candidate turn index for the evaluation lookup.
-          const candidateIdx = isCandidateTurn
-            ? displayMessages.slice(0, idx).filter((t) => t.role === 'candidate').length
-            : -1
-          const evaluation = candidateIdx >= 0 ? evalByTurnIdx.get(candidateIdx) : undefined
+          const isLatestInterviewer = turn.role === 'interviewer' && idx === latestInterviewerIdx
 
           return (
             <div key={idx}>
+              {/* Evaluation card (scores + feedback) shown BEFORE the interviewer question */}
+              {turn.role === 'interviewer' && turn.evaluation && (
+                <EvaluationCard eval={turn.evaluation} />
+              )}
+
               {isLatestInterviewer ? (
-                // Render latest interviewer message with typewriter effect
+                // Latest interviewer message: typewriter animation
                 <div className="flex items-end gap-2">
                   <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-500">
-                    {/* Bot icon inline to avoid importing inside map */}
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
                   </div>
                   <div className="max-w-[75%]">
@@ -382,7 +460,6 @@ export default function InterviewPage() {
                         speed={20}
                         onComplete={() => {
                           setIsTyping(false)
-                          // Auto-focus textarea after animation completes
                           setTimeout(() => textareaRef.current?.focus(), 0)
                         }}
                       />
@@ -391,10 +468,6 @@ export default function InterviewPage() {
                 </div>
               ) : (
                 <ChatBubble role={turn.role} content={turn.content} />
-              )}
-              {/* Inline evaluation card after candidate messages (only once server responds) */}
-              {isCandidateTurn && evaluation && (
-                <EvaluationCard eval={evaluation} />
               )}
             </div>
           )
