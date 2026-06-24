@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { CheckCircle2, AlertTriangle, Star, Loader2, AlertCircle, MessageSquare } from 'lucide-react'
 import ChatBubble, { TypingIndicator } from '../components/ChatBubble'
+import TypewriterText from '../components/TypewriterText'
 import ScoreBadge from '../components/ScoreBadge'
 import EmptyState from '../components/EmptyState'
 import ConfirmDialog from '../components/ConfirmDialog'
@@ -163,13 +164,25 @@ export default function InterviewPage() {
   const [displayMessages,      setDisplayMessages]      = useState<DisplayMessage[]>([])
   const [isWaitingForResponse, setIsWaitingForResponse] = useState(false)
 
+  // Track whether this is the first time we've loaded the session (to animate the greeting)
+  const initialLoadDone = useRef(false)
+
   // Sync both sessionData and displayMessages when the entity loads or refreshes
   useEffect(() => {
     if (entity?.agent_state) {
       const parsed = parseSession(entity.agent_state)
       if (parsed) {
         setSessionData(parsed)
-        setDisplayMessages(toDisplayMessages(parsed))
+        const msgs = toDisplayMessages(parsed)
+        setDisplayMessages(msgs)
+        // Animate last interviewer message only on the initial page load
+        if (!initialLoadDone.current) {
+          initialLoadDone.current = true
+          const last = msgs[msgs.length - 1]
+          if (last?.role === 'interviewer') {
+            setIsTyping(true)
+          }
+        }
       }
     }
   }, [entity])
@@ -182,7 +195,10 @@ export default function InterviewPage() {
 
   const [answer,        setAnswer]        = useState('')
   const [showEndDialog, setShowEndDialog] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  // True while the latest interviewer message is still typewriting
+  const [isTyping,      setIsTyping]      = useState(false)
+  const bottomRef   = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const MAX_CHARS = 2000
 
   // Auto-scroll whenever a new message is appended or the typing indicator appears
@@ -191,12 +207,18 @@ export default function InterviewPage() {
   }, [displayMessages.length, isWaitingForResponse])
 
   // Sync display messages and session metadata from a successful mutation response,
-  // then clear the waiting state so the input is re-enabled.
+  // then clear the waiting state and start typewriter for the new interviewer message.
   function handleMutationSuccess(updated: Record<string, unknown>) {
     const parsed = parseSession(updated)
     if (parsed) {
       setSessionData(parsed)
-      setDisplayMessages(toDisplayMessages(parsed))
+      const msgs = toDisplayMessages(parsed)
+      setDisplayMessages(msgs)
+      // If the last message is from the interviewer, animate it
+      const last = msgs[msgs.length - 1]
+      if (last?.role === 'interviewer') {
+        setIsTyping(true)
+      }
     }
     setIsWaitingForResponse(false)
   }
@@ -288,6 +310,14 @@ export default function InterviewPage() {
   // Map the nth candidate turn to its evaluation (0-indexed)
   const evalByTurnIdx = new Map(answers.map((ev, i) => [i, ev]))
 
+  // Index of the latest interviewer message — only that one gets typewriter animation
+  const latestInterviewerIdx = displayMessages.reduce(
+    (last, t, i) => (t.role === 'interviewer' ? i : last), -1
+  )
+
+  // Input is locked while waiting for server response OR while typewriter is animating
+  const inputLocked = isWaitingForResponse || isTyping
+
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col">
       <ConfirmDialog
@@ -328,6 +358,7 @@ export default function InterviewPage() {
       <div className="flex-1 overflow-y-auto bg-gray-50 px-4 py-6 space-y-4">
         {displayMessages.map((turn, idx) => {
           const isCandidateTurn = turn.role === 'candidate'
+          const isLatestInterviewer = !isCandidateTurn && idx === latestInterviewerIdx
           // Count how many candidate messages appeared BEFORE this index to get
           // the 0-based candidate turn index for the evaluation lookup.
           const candidateIdx = isCandidateTurn
@@ -337,7 +368,30 @@ export default function InterviewPage() {
 
           return (
             <div key={idx}>
-              <ChatBubble role={turn.role} content={turn.content} />
+              {isLatestInterviewer ? (
+                // Render latest interviewer message with typewriter effect
+                <div className="flex items-end gap-2">
+                  <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-gray-200 text-gray-500">
+                    {/* Bot icon inline to avoid importing inside map */}
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+                  </div>
+                  <div className="max-w-[75%]">
+                    <div className="rounded-2xl rounded-bl-none bg-gray-100 px-4 py-3 text-sm leading-relaxed text-gray-800">
+                      <TypewriterText
+                        text={turn.content}
+                        speed={20}
+                        onComplete={() => {
+                          setIsTyping(false)
+                          // Auto-focus textarea after animation completes
+                          setTimeout(() => textareaRef.current?.focus(), 0)
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <ChatBubble role={turn.role} content={turn.content} />
+              )}
               {/* Inline evaluation card after candidate messages (only once server responds) */}
               {isCandidateTurn && evaluation && (
                 <EvaluationCard eval={evaluation} />
@@ -377,11 +431,12 @@ export default function InterviewPage() {
           )}
 
           <textarea
+            ref={textareaRef}
             value={answer}
             onChange={(e) => setAnswer(e.target.value.slice(0, MAX_CHARS))}
             placeholder="Type your answer here…"
             rows={4}
-            disabled={isWaitingForResponse}
+            disabled={inputLocked}
             onKeyDown={(e) => {
               // Enter submits; Shift+Enter inserts a newline as usual
               if (e.key === 'Enter' && !e.shiftKey) {
@@ -400,7 +455,7 @@ export default function InterviewPage() {
               <span className="hidden text-xs text-gray-400 sm:block">Shift+Enter for newline</span>
               <button
                 onClick={handleSubmit}
-                disabled={!answer.trim() || isWaitingForResponse}
+                disabled={!answer.trim() || inputLocked}
                 className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {isWaitingForResponse ? (
