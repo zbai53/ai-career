@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query'
 import client from './client'
+import { parseParsedData } from './utils'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -40,6 +41,8 @@ export interface InterviewSession {
   sessionId: string
   status: string
   conversation: Record<string, unknown>
+  /** JSONB CoachReview — populated after POST /interviews/{id}/end-with-review */
+  review: Record<string, unknown> | null
 }
 
 // ---------------------------------------------------------------------------
@@ -55,7 +58,7 @@ export function useParseResume() {
       const { data } = await client.post<ParsedResume>('/resumes/parse', form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
-      return data
+      return parseParsedData(data)
     },
   })
 }
@@ -65,7 +68,7 @@ export function useParseJD() {
   return useMutation<ParsedJD, Error, { text?: string; url?: string }>({
     mutationFn: async (payload) => {
       const { data } = await client.post<ParsedJD>('/jds/parse', payload)
-      return data
+      return parseParsedData(data)
     },
   })
 }
@@ -143,7 +146,7 @@ export function useGetResume(id: number | null) {
     queryKey: ['resume', id],
     queryFn: async () => {
       const { data } = await client.get<ParsedResume>(`/resumes/${id}`)
-      return data
+      return parseParsedData(data)
     },
     enabled: id !== null,
   })
@@ -155,7 +158,7 @@ export function useGetJD(id: number | null) {
     queryKey: ['jd', id],
     queryFn: async () => {
       const { data } = await client.get<ParsedJD>(`/jds/${id}`)
-      return data
+      return parseParsedData(data)
     },
     enabled: id !== null,
   })
@@ -187,6 +190,18 @@ export function useGetRewrite(id: number | null) {
     queryKey: ['rewrite', id],
     queryFn: async () => {
       const { data } = await client.get<RewriteEntity>(`/rewrite/${id}`)
+      return data
+    },
+    enabled: id !== null,
+  })
+}
+
+/** GET /api/interviews/{id} — Spring Boot entity; conversation is JSONB InterviewSessionData */
+export function useGetInterview(id: number | null) {
+  return useQuery<InterviewSession, Error>({
+    queryKey: ['interview', id],
+    queryFn: async () => {
+      const { data } = await client.get<InterviewSession>(`/interviews/${id}`)
       return data
     },
     enabled: id !== null,

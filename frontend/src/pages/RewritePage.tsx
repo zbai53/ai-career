@@ -1,7 +1,8 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { MessageSquare, CheckSquare, AlertCircle, TrendingUp, Zap } from 'lucide-react'
+import { MessageSquare, CheckSquare, AlertCircle, TrendingUp, Zap, FileText } from 'lucide-react'
 import FidelityBadge from '../components/FidelityBadge'
 import BulletComparison from '../components/BulletComparison'
+import EmptyState from '../components/EmptyState'
 import { useGetRewrite } from '../api/hooks'
 
 // ---------------------------------------------------------------------------
@@ -116,34 +117,25 @@ export default function RewritePage() {
   // ---- No id yet ----
   if (id === 'latest' || !rewriteId) {
     return (
-      <div className="mx-auto max-w-lg space-y-4 pt-12 text-center">
-        <h1 className="text-2xl font-bold text-gray-900">Resume Rewrite</h1>
-        <p className="text-gray-500">
-          No rewrite result yet. Run a match first and click "Rewrite Resume".
-        </p>
-        <button
-          onClick={() => navigate('/upload')}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-        >
-          Get started
-        </button>
-      </div>
+      <EmptyState
+        icon={<FileText className="h-8 w-8" />}
+        title="No rewrite yet"
+        description="Run a match first and click 'Rewrite Resume' to see an AI-improved version of your resume."
+        actionLabel="Get started"
+        onAction={() => navigate('/upload')}
+      />
     )
   }
 
   if (isError) {
     return (
-      <div className="mx-auto max-w-lg space-y-4 pt-12 text-center">
-        <AlertCircle className="mx-auto h-12 w-12 text-red-400" />
-        <h1 className="text-xl font-bold text-gray-900">Rewrite not found</h1>
-        <p className="text-sm text-gray-500">{error?.message ?? `No rewrite result with id ${id}.`}</p>
-        <button
-          onClick={() => navigate(-1)}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-        >
-          Go back
-        </button>
-      </div>
+      <EmptyState
+        icon={<AlertCircle className="h-8 w-8" />}
+        title="Rewrite not found"
+        description={error?.message ?? `No rewrite result with id ${id}.`}
+        actionLabel="Go back"
+        onAction={() => navigate(-1)}
+      />
     )
   }
 

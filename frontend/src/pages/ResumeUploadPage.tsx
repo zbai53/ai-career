@@ -35,6 +35,16 @@ function num(obj: unknown, ...keys: string[]): number {
   return typeof cur === 'number' ? cur : 0
 }
 
+/** Skills can be plain strings OR objects {name, category, proficiency}. */
+function skillName(skill: unknown): string {
+  if (typeof skill === 'string') return skill
+  if (skill && typeof skill === 'object') {
+    const s = (skill as Record<string, unknown>).name
+    return typeof s === 'string' ? s : ''
+  }
+  return ''
+}
+
 // ---------------------------------------------------------------------------
 
 function SkillBadge({ label }: { label: string }) {
@@ -73,7 +83,7 @@ export default function ResumeUploadPage() {
   const email      = str(pd, 'contact', 'email')
   const education  = arr(pd, 'education')
   const experience = arr(pd, 'experience')
-  const skills     = arr(pd, 'skills') as string[]
+  const skills     = arr(pd, 'skills')
   const confidence = num(pd, 'parse_confidence') * 100  // 0–1 → 0–100
 
   function handleContinue() {
@@ -155,8 +165,8 @@ export default function ResumeUploadPage() {
               <div>
                 <p className="text-sm font-medium text-gray-700 mb-2">Extracted skills</p>
                 <div className="flex flex-wrap gap-2">
-                  {skills.slice(0, 20).map((skill) => (
-                    <SkillBadge key={skill} label={skill} />
+                  {skills.slice(0, 20).map((skill, i) => (
+                    <SkillBadge key={skillName(skill) || i} label={skillName(skill)} />
                   ))}
                   {skills.length > 20 && (
                     <span className="text-xs text-gray-400 self-center">

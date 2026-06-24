@@ -1,8 +1,9 @@
 import { useParams, useNavigate } from 'react-router-dom'
-import { FileEdit, MessageSquare, AlertCircle } from 'lucide-react'
+import { FileEdit, MessageSquare, AlertCircle, BarChart2 } from 'lucide-react'
 import RadarChart from '../components/RadarChart'
 import ScoreCard from '../components/ScoreCard'
 import GapAnalysis from '../components/GapAnalysis'
+import EmptyState from '../components/EmptyState'
 import { useGetMatch } from '../api/hooks'
 import { useWorkflowStore } from '../stores/workflowStore'
 
@@ -59,37 +60,26 @@ export default function MatchResultPage() {
   // ---- 404 ----
   if (isError) {
     return (
-      <div className="mx-auto max-w-lg space-y-4 pt-12 text-center">
-        <AlertCircle className="mx-auto h-12 w-12 text-red-400" />
-        <h1 className="text-xl font-bold text-gray-900">Match not found</h1>
-        <p className="text-sm text-gray-500">
-          {error?.message ?? `No match result with id ${id}.`}
-        </p>
-        <button
-          onClick={() => navigate('/jd')}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-        >
-          Run a new match
-        </button>
-      </div>
+      <EmptyState
+        icon={<AlertCircle className="h-8 w-8" />}
+        title="Match not found"
+        description={error?.message ?? `No match result with id ${id}.`}
+        actionLabel="Run a new match"
+        onAction={() => navigate('/jd')}
+      />
     )
   }
 
   // ---- No id yet (navigated via sidebar before running a match) ----
   if (id === 'latest' && !data) {
     return (
-      <div className="mx-auto max-w-lg space-y-4 pt-12 text-center">
-        <h1 className="text-2xl font-bold text-gray-900">Match Results</h1>
-        <p className="text-gray-500">
-          No match result yet. Upload a resume and paste a JD to get started.
-        </p>
-        <button
-          onClick={() => navigate('/upload')}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-        >
-          Get started
-        </button>
-      </div>
+      <EmptyState
+        icon={<BarChart2 className="h-8 w-8" />}
+        title="No match results yet"
+        description="Upload a resume and paste a JD to score how well you match the role."
+        actionLabel="Get started"
+        onAction={() => navigate('/upload')}
+      />
     )
   }
 
