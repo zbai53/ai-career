@@ -647,6 +647,159 @@ The page includes:
 
 ---
 
+## RAG Pipeline
+
+The system uses two Qdrant collections populated at startup (or on demand via `POST /api/rag/index`).
+
+### Embedding Model
+
+| Property | Value |
+|---|---|
+| Model | `all-MiniLM-L6-v2` (sentence-transformers) |
+| Vector dimension | 384 |
+| Similarity metric | Cosine |
+| Runtime | CPU; loaded once at import, shared across all searches |
+
+### Qdrant Collections
+
+| Collection | Contents | Indexed by |
+|---|---|---|
+| `interview_questions` | 20 questions with `role`, `type`, `difficulty` metadata | `index_questions()` in `app/rag/question_index.py` |
+| `ats_keywords` | ~125 industry-standard keywords across 3 industries and 8 roles | `index_ats_keywords()` in `app/rag/ats_keywords.py` |
+
+Both collections use stable, deterministic IDs (derived from content via `uuid5`) so repeated indexing is safe (upsert semantics).
+
+### Search Flow — Interview Questions
+
+```
+InterviewAgent.start_session(jd, resume, num_questions)
+  │
+  ├── search_questions(query=jd.title, role="backend", type="technical", limit=ceil(n*0.6))
+  │     → Qdrant cosine similarity search, payload filter on role+type
+  │     → returns list[InterviewQuestion] sorted by score
+  │
+  ├── search_questions(query=jd.title, type="behavioral", limit=floor(n*0.4))
+  │     → same collection, behavioral-only filter
+  │
+  └── combine + shuffle → session.questions (capped at num_questions)
+```
+
+### ATS Keyword Lookup
+
+`find_missing_keywords(resume_text, industry, role)` in `app/rag/ats_keywords.py` is **pure Python** — it does a dict lookup against the in-memory `_ATS_KEYWORDS` library and runs case-insensitive substring matching against `resume.raw_text`.  No Qdrant call is made at match time; Qdrant is used only at indexing time to make the keywords semantically searchable.
+
+`MatchAgent.match()` infers `(industry, role)` from the JD title via `_infer_ats_role()` and calls `find_missing_keywords()` to populate `ats_present`, `ats_missing`, and `ats_coverage_percent` on every `MatchResult`.
+
+---
+
+## Interview Flow
+
+### Session Lifecycle
+
+```
+POST /api/interviews/start  (Spring Boot)
+  → POST /api/interview/start  (Agent Service)
+        InterviewAgent.start_session()
+          search_questions() × 2 (technical + behavioral)
+          → first question
+  ← session_id (UUID), question, total_questions
+  Spring Boot: INSERT interview_sessions row
+
+POST /api/interviews/{id}/answer  (Spring Boot, repeat)
+  → POST /api/interview/{id}/answer  (Agent Service)
+        InterviewAgent.process_turn()
+          evaluate_answer()   ← Claude call (AnswerEvaluation)
+          _decide_next_action()
+          respond()           ← Claude call (next content)
+  ← next_action, next_content, conversation_history, is_complete
+  Spring Boot: UPDATE interview_sessions.conversation
+
+POST /api/interviews/{id}/end  (Spring Boot)
+  → POST /api/interview/{id}/end-with-review  (Agent Service)
+        CoachAgent.review()  ← Claude call (CoachReview)
+  ← session summary + coach_review
+  Spring Boot: UPDATE interview_sessions SET status, ended_at, review, conversation
+```
+
+### Multi-Turn State Diagram
+
+```
+         ┌─────────────────────────────────────┐
+         │         answer submitted             │
+         ▼                                      │
+  ┌─────────────┐     relevance < 5      ┌──────────────┐
+  │  evaluate   │ ──────────────────────► │  re_answer   │
+  │  (Claude)   │                         └──────────────┘
+  └──────┬──────┘                                │
+         │                                       │ (same question re-asked)
+         │ depth < 5                             │
+         │ AND follow_ups < 2             ┌──────────────┐
+         └──────────────────────────────► │  follow_up   │
+         │                                └──────────────┘
+         │                                       │
+         │ overall >= 7                          │ (probing question asked)
+         │ OR follow_ups >= 2             ┌──────────────┐
+         └──────────────────────────────► │ next_question │
+                                          └──────┬───────┘
+                                                 │
+                              more questions?    │
+                         ┌───────────────────────┘
+                         │ yes → loop back to evaluate
+                         │ no  → done → POST /end
+                         └──────────────────────►  CoachAgent.review()
+```
+
+### `next_action` Decision Rules (priority order)
+
+| Priority | Condition | Action | What the candidate sees |
+|---|---|---|---|
+| 1 (highest) | `relevance_score < 5` | `re_answer` | Same question re-asked with a reframe |
+| 2 | `depth_score < 5` AND `follow_up_count < 2` | `follow_up` | A probing follow-up question |
+| 3 | `follow_up_count >= 2` OR `overall_score >= 7` | `next_question` | Next main question |
+| 4 | All questions done | `done` | Prompt to call `/end` |
+
+---
+
+## Coach Review
+
+### Purpose
+
+`CoachAgent` analyses the full `conversation_history` (including follow-up probes and re-answer turns) rather than just the final answer scores.  This lets it identify patterns across the session — e.g. the candidate consistently avoids quantifying results, or struggles with system-design depth but excels at behavioral storytelling.
+
+### Evaluation Framework
+
+| Dimension | Behavioral questions | Technical questions |
+|---|---|---|
+| Structure | STAR completeness (Situation, Task, Action, Result) | Logical flow (problem → approach → trade-offs → conclusion) |
+| Depth | Specificity of action taken | Technical accuracy and detail level |
+| Practical application | Real impact / outcome stated | Connection to production experience |
+| Communication | Clarity, conciseness, no rambling | Precision of technical vocabulary |
+
+### Output Structure
+
+```json
+{
+  "overall_score":   74.5,
+  "readiness":       "almost",
+  "strengths":       ["..."],
+  "improvements":    ["..."],
+  "per_question_feedback": [
+    { "question": "...", "type": "technical", "score": 7.5, "feedback": "..." }
+  ],
+  "focus_topics":   ["System design trade-offs", "STAR result quantification"]
+}
+```
+
+### Readiness Verdicts
+
+| Verdict | Score range | Meaning |
+|---|---|---|
+| `yes` | 80–100 | Ready to interview for this role level |
+| `almost` | 60–79 | Solid foundation; targeted practice will close the gap |
+| `needs_more_practice` | 0–59 | Foundational gaps; more structured preparation recommended |
+
+---
+
 ## Invocation from Spring Boot
 
 `WorkflowController.java` → `AgentServiceClient.runWorkflow()` → `POST /api/workflow/run`

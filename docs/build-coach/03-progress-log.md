@@ -5,6 +5,89 @@
 
 ---
 
+## Phase 5 Complete — 2026-06-23
+
+**Days 28–35 | Interview + Coach Agents + RAG**
+
+**All tasks complete. 225 tests passing. Phase 5 closed.**
+
+### What was built (8 days)
+
+| Day | Deliverable |
+|---|---|
+| 28 | `EmbeddingService` (all-MiniLM-L6-v2, 384-dim), `QdrantVectorStore`, 20-question bank indexed into Qdrant `interview_questions` collection, `POST /api/rag/index` + `POST /api/rag/search` |
+| 29 | `InterviewAgent`: RAG-backed `start_session()` (60% technical / 40% behavioral), `evaluate_answer()`, `ask_next()`. `InterviewSessionData` Pydantic model. 4 FastAPI interview endpoints |
+| 30 | `CoachAgent`: STAR analysis, technical depth scoring, readiness verdict (`yes`/`almost`/`needs_more_practice`). `POST /api/interview/{id}/end-with-review`. LangGraph `review_node` wired. 7 coach tests |
+| 31 | `process_turn()` multi-turn pipeline: evaluate → `_decide_next_action` → respond. `re_answer` (relevance < 5), `follow_up` (depth < 5, cap ≤ 2), `next_question` (overall ≥ 7). Full `conversation_history` tracking |
+| 32 | Spring Boot `InterviewController` + `InterviewService`. `InterviewSessionMapper` with JSONB conversation/review columns. Flyway V4 migration (`session_id` column + index). All 225 tests passing |
+| 33 | Spring Boot endpoint refinements. `POST /api/interview/{id}/end-with-review` (combined summary + coach). `AgentServiceClient` interview methods with 30s/60s timeout split |
+| 34 | `app/rag/ats_keywords.py`: 3 industries × 8 roles × 125 keywords. `find_missing_keywords()` pure-Python coverage check. `_infer_ats_role()` title → role key mapping. `MatchResult` now includes `ats_present`, `ats_missing`, `ats_coverage_percent`. `interview-eval-v1.md` with STAR examples and talking points |
+| 35 | End-to-end smoke test: 211/211 Python tests, 14/14 Spring Boot tests, 4/4 Docker containers healthy, 6/6 smoke endpoint checks green. `architecture-workflow.md` + `api-endpoints.md` comprehensive audit (9 missing endpoints added). `project-summary.md` created |
+
+### Key metrics at Phase 5 close
+
+| Metric | Value |
+|---|---|
+| Python tests | 211 |
+| Spring Boot tests | 14 |
+| Total tests | 225 |
+| Agent service endpoints | 21 |
+| Spring Boot endpoints | 19 |
+| Qdrant collections | 2 (interview_questions, ats_keywords) |
+| ATS keywords indexed | ~125 (3 industries, 8 roles) |
+| Interview questions | 20 (12 technical, 8 behavioral) |
+| DB tables | 6 (users, resumes, job_descriptions, match_results, interview_sessions, agent_runs) |
+| Flyway migrations | 4 (V1–V4) |
+
+### What's next
+
+**Phase 6 — React Frontend (Days 36–41)**
+- Auth pages (login/register) with JWT
+- Resume upload with drag-and-drop and parse preview
+- Match results page with radar chart (Recharts)
+- Side-by-side rewrite comparison with fidelity badge
+- Interview chat UI with question counter
+- ⭐ React Flow workflow visualization with SSE real-time updates
+
+---
+
+## Day 35 — 2026-06-23 (Phase 5: Interview + Coach Agents + RAG)
+
+**Completed:**
+- Full end-to-end smoke test: 6/6 endpoints return expected responses
+- All 211 Python tests passing (48s), all 14 Spring Boot tests passing
+- All 4 Docker containers confirmed healthy (PostgreSQL, Redis, Qdrant, MinIO up 2+ days)
+- Agent service and Spring Boot both running cleanly before test (port conflict on launch = both already up)
+- Comprehensive `api-endpoints.md` audit: added 9 previously undocumented endpoints (GET /resumes/{id}, GET /jds/{id}, POST/GET /rewrite, end-with-review, coach/review, agent-runs passthrough, RAG endpoints)
+- Updated `architecture-workflow.md`: added RAG Pipeline, Interview Flow (multi-turn state diagram), Coach Review sections
+- Created `project-summary.md` with full architecture overview, achievement writeup, and EN/CN resume bullets
+
+**Note:** `POST /api/rag/search` returned 500 on first call because `interview_questions` collection doesn't yet exist in fresh Qdrant state. After calling `POST /api/rag/index` first, search returned correct results. Production startup sequence should call index on boot.
+
+**Blockers:** None
+
+**Phase 5 complete.**
+
+---
+
+## Day 34 — 2026-06-23 (Phase 5: Interview + Coach Agents + RAG)
+
+**Completed:**
+- Created `app/rag/ats_keywords.py`: ATS keyword library with 3 industries (technology, finance, healthcare), 8 roles, ~125 keywords
+- `_categorise()`: assigns language/framework/tool/concept tag per keyword
+- `index_ats_keywords()`: embeds and upserts into Qdrant `ats_keywords` collection (stable IDs via `{industry}_{role}_{i}`)
+- `find_missing_keywords(resume_text, industry, role)`: pure-Python case-insensitive substring check, returns `{present, missing, coverage_percent}`
+- Updated `MatchAgent.match()`: added `_infer_ats_role(jd_title, industry)` to map JD to ATS keys; populates `ats_present`, `ats_missing`, `ats_coverage_percent` on every `MatchResult`
+- Added `test_ats_keywords_included_in_result` — verifies ATS fields, coverage bounds, and present+missing == 25 (no Qdrant required)
+- Created `docs/evaluation/interview-eval-v1.md`: system design, multi-turn logic, scoring ranges, 3 Q&A examples, evaluation criteria, 5 talking points
+- Updated `docs/architecture-workflow.md`: RAG Pipeline, Interview Flow, Coach Review sections
+
+**Blockers:** None
+
+**Next:** Day 35 — End-to-end smoke test, documentation audit, Phase 5 wrap-up
+
+---
+
 ## Day 33 — 2025-06-23 (Phase 5: Interview + Coach Agents + RAG)
 
 **Completed:**

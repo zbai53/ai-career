@@ -35,6 +35,73 @@ Sends a minimal prompt to Claude to confirm the Anthropic API is reachable.
 
 ---
 
+### RAG
+
+#### `POST /api/rag/index`
+
+Index (or re-index) the built-in interview question bank into Qdrant.  Idempotent — safe to call multiple times.  Typically called once at service startup.
+
+**Request** — no body
+
+**Response 200**
+```json
+{ "status": "ok", "count": 20 }
+```
+
+**Response 500**
+```json
+{ "error": "Indexing failed: <exception message>" }
+```
+
+---
+
+#### `POST /api/rag/search`
+
+Semantic search over the interview question bank stored in Qdrant.
+
+**Request** — `application/json`
+
+```json
+{
+  "query":      "system design distributed database",
+  "role":       "backend",
+  "type":       "technical",
+  "difficulty": "medium",
+  "limit":      5
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `query` | string | yes | Natural-language search query |
+| `role` | string \| null | no | Filter: `"backend"`, `"frontend"`, `"general"`, etc. |
+| `type` | string \| null | no | Filter: `"technical"` or `"behavioral"` |
+| `difficulty` | string \| null | no | Filter: `"easy"`, `"medium"`, or `"hard"` |
+| `limit` | int \| null | no | Max results to return; defaults to `5` |
+
+**Response 200** — list of matching questions with similarity scores
+
+```json
+[
+  {
+    "question_number": 3,
+    "text":            "Walk me through how you would design a URL shortener at scale.",
+    "type":            "technical",
+    "difficulty":      "medium",
+    "role":            "backend",
+    "topic":           "system_design",
+    "score":           0.912
+  }
+]
+```
+
+**Response 500**
+```json
+{ "error": "Search failed: <exception message>" }
+```
+
+---
+
 ### Resume
 
 #### `POST /api/resume/parse`
@@ -122,6 +189,11 @@ Match a parsed resume against a parsed job description and return similarity sco
   "improvement_suggestions": ["..."],
   "interview_focus_areas": ["..."],
   "overall_assessment": "Jordan is a solid mid-level backend candidate...",
+  "matched_skills":   ["Java", "Python", "Spring Boot"],
+  "matched_keywords": ["Java", "Spring Boot"],
+  "ats_present":          ["Java", "Python", "Docker", "Git"],
+  "ats_missing":          ["Kafka", "Redis", "Kubernetes", "Spring Boot"],
+  "ats_coverage_percent": 36.0,
   "agent_run": {
     "agent_name": "match_agent",
     "input_summary": "resume skills=13, jd=Backend Java Engineer",
@@ -135,6 +207,8 @@ Match a parsed resume against a parsed job description and return similarity sco
   }
 }
 ```
+
+**ATS fields** (`ats_present`, `ats_missing`, `ats_coverage_percent`) reflect industry-standard keyword coverage from the built-in ATS library, independently of the JD's own keyword list.  The role is inferred from the JD title (e.g. "Backend Engineer" → `technology/backend_engineer`).  See `app/rag/ats_keywords.py` for the full keyword library.
 
 **Score formula**
 
@@ -403,6 +477,129 @@ Safe to poll repeatedly; read-only — does not advance the graph.
 
 ---
 
+### Interview (Agent Service)
+
+The four core interview endpoints (`/start`, `/answer`, `GET /{id}`, `/end`) are documented under **Interview** in the Spring Boot section above — both layers share the same request/response contract.  The two agent-service–only variants are documented here.
+
+#### `POST /api/interview/{session_id}/end-with-review`
+
+End the session and return the session summary plus a full `CoachAgent` review in one call.  Preferred over `POST /api/interview/{session_id}/end` when the caller has the JD and resume available.
+
+**Path parameter:** `session_id` — Python UUID
+
+**Request** — `application/json`
+
+```json
+{
+  "session": { /* InterviewSessionData dict — obtain from GET /api/interview/{id} */ },
+  "jd":      { /* ParsedJobDescription dict */ },
+  "resume":  { /* ParsedResume dict */ }
+}
+```
+
+**Response 200** — session summary (same shape as `/end`) plus `coach_review` field
+
+```json
+{
+  "session_id":         "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "jd_title":           "Senior Backend Engineer",
+  "status":             "completed",
+  "total_questions":    5,
+  "questions_answered": 5,
+  "average_scores": {
+    "relevance":     7.4,
+    "depth":         6.8,
+    "communication": 8.1,
+    "overall":       7.3
+  },
+  "questions":            [ /* InterviewQuestion objects */ ],
+  "answers":              [ /* AnswerEvaluation objects */ ],
+  "conversation_history": [ /* full ordered turn log */ ],
+  "follow_up_counts":     { "0": 1 },
+  "started_at":           "2026-06-22T14:30:00.000Z",
+  "ended_at":             "2026-06-22T14:52:14.000Z",
+  "coach_review": {
+    "overall_score":          74.5,
+    "readiness":              "almost",
+    "strengths":              ["Strong STAR structure", "..."],
+    "improvements":           ["Quantify results", "..."],
+    "per_question_feedback":  [ { "question": "...", "type": "technical", "score": 7.5, "feedback": "..." } ],
+    "focus_topics":           ["System design trade-offs"]
+  }
+}
+```
+
+`coach_review` is `null` if no answers were submitted or if `CoachAgent` failed (non-fatal).
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 400 | `jd` or `resume` fails Pydantic validation | `{"error": "Validation failed: <detail>"}` |
+| 404 | `session_id` not found | `{"error": "Session '...' not found"}` |
+
+---
+
+### Coach (Agent Service)
+
+#### `POST /api/coach/review`
+
+Standalone coach review endpoint.  Accepts a completed `InterviewSessionData` dict plus the JD and resume, runs `CoachAgent.review()`, and returns the full `CoachReview` JSON.  Use this to re-review an existing session or to review a session that was run outside the `/api/interview/*` flow.
+
+**Request** — `application/json`
+
+```json
+{
+  "session": { /* InterviewSessionData dict */ },
+  "jd":      { /* ParsedJobDescription dict */ },
+  "resume":  { /* ParsedResume dict */ }
+}
+```
+
+**Response 200**
+
+```json
+{
+  "overall_score":          74.5,
+  "readiness":              "almost",
+  "strengths":              ["Strong command of database fundamentals", "STAR structure was clear"],
+  "improvements":           ["Quantify results", "Expand NoSQL use-case depth"],
+  "per_question_feedback":  [ { "question": "...", "type": "technical", "score": 7.5, "feedback": "..." } ],
+  "focus_topics":           ["System design trade-offs", "STAR result quantification"],
+  "agent_run": {
+    "agent_name":   "coach_agent",
+    "status":       "success",
+    "duration_ms":  1840,
+    "token_count":  920,
+    "model_name":   "claude-haiku-4-5-20251001",
+    "created_at":   "2026-06-22T15:00:00.000000+00:00"
+  }
+}
+```
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 400 | Validation failure on any input dict | `{"error": "Validation failed: <detail>"}` |
+| 500 | `CoachAgent.review()` raises | `{"error": "CoachAgent review failed: <detail>"}` |
+
+---
+
+### Agent Runs (Agent Service)
+
+#### `POST /api/agent-runs`
+
+Passthrough endpoint for agent-run records.  Accepts an `agent_run` dict (as produced by `log_agent_run()`) and returns it as-is.  The caller (Spring Boot) is responsible for persisting the record to the `agent_runs` table.
+
+**Request** — `application/json` — any `agent_run` dict
+
+**Response 200** — same dict echoed back
+
+---
+
+### Workflow (Visualisation)
+
 #### `GET /api/workflow/visualize`
 
 Return the Mermaid diagram source of the compiled workflow graph.
@@ -482,6 +679,26 @@ Upload a resume file. The backend saves the file temporarily, forwards it to the
 
 ---
 
+#### `GET /api/resumes/{id}`
+
+Retrieve a previously parsed resume by its database ID.
+
+**Path parameter**
+
+| Parameter | Type | Notes |
+|-----------|------|-------|
+| `id` | Long | Resume ID returned from `POST /api/resumes/parse` |
+
+**Response 200** — `Resume` entity JSON (includes the parsed JSON blob stored at parse time)
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | No resume with that ID | `{"error": "Resume not found: <id>"}` |
+
+---
+
 ### Job Description
 
 #### `POST /api/jds/parse`
@@ -510,6 +727,26 @@ Submit a job description for parsing. Exactly one of `text` or `url` must be pro
 |--------|-----------|------|
 | 400 | Neither `text` nor `url` is provided (Bean Validation failure) | `{"error": "<constraint message>"}` |
 | 500 | Agent Service unreachable, URL fetch failure, or parse failure | `{"error": "Failed to parse job description: <message>"}` |
+
+---
+
+#### `GET /api/jds/{id}`
+
+Retrieve a previously parsed job description by its database ID.
+
+**Path parameter**
+
+| Parameter | Type | Notes |
+|-----------|------|-------|
+| `id` | Long | JD ID returned from `POST /api/jds/parse` |
+
+**Response 200** — `JobDescription` entity JSON
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | No JD with that ID | `{"error": "Job description not found: <id>"}` |
 
 ---
 
@@ -579,6 +816,75 @@ Retrieve a previously computed match result by its database ID.
 | Status | Condition | Body |
 |--------|-----------|------|
 | 404 | No match result with that ID | `{"error": "Match result not found: <id>"}` |
+
+---
+
+### Rewrite (Spring Boot)
+
+#### `POST /api/rewrite`
+
+Trigger a resume rewrite via the Agent Service.  The backend fetches the resume, JD, and most recent match result from the DB, calls `POST /api/rewrite` on the Agent Service, persists the result, and returns the combined response.
+
+**Request** — `application/json`
+
+```json
+{
+  "resumeId":      1,
+  "jdId":          2,
+  "matchResultId": 7
+}
+```
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `resumeId` | Long | yes | ID from `POST /api/resumes/parse` |
+| `jdId` | Long | yes | ID from `POST /api/jds/parse` |
+| `matchResultId` | Long | yes | ID from `POST /api/match` |
+
+**Response 200** — `RewriteResult` JSON forwarded from Agent Service, merged with persisted entity `id`
+
+```json
+{
+  "id":          3,
+  "resumeId":    1,
+  "jdId":        2,
+  "experiences": [ /* rewritten experience entries */ ],
+  "keywords_injected":          ["distributed", "high availability"],
+  "overall_improvement_summary": "...",
+  "rewrite_confidence":          0.88,
+  "fidelity_report":             { "fidelity_score": 0.95, "passed": true, "flags": [] },
+  "rewrite_attempts":            1,
+  "fidelity_status":             "passed",
+  "agent_run":                   { /* AgentRun object */ }
+}
+```
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | Resume, JD, or match result not found | (empty 404 body) |
+| 500 | Agent Service unreachable or rewrite failure | `{"error": "Rewrite failed: <message>"}` |
+
+---
+
+#### `GET /api/rewrite/{id}`
+
+Retrieve a previously saved rewrite result by its database ID.
+
+**Path parameter**
+
+| Parameter | Type | Notes |
+|-----------|------|-------|
+| `id` | Long | Rewrite result ID returned from `POST /api/rewrite` or `POST /api/workflow/full` |
+
+**Response 200** — `RewriteResult` entity JSON (same shape as `POST /api/rewrite` response)
+
+**Error responses**
+
+| Status | Condition | Body |
+|--------|-----------|------|
+| 404 | No rewrite result with that ID | (empty 404 body) |
 
 ---
 
@@ -983,36 +1289,62 @@ Browser / API Client
   │
   ▼
 Main Service :8080
-  │  POST /api/resumes/parse      (multipart) ──────────────────┐
-  │  POST /api/jds/parse          (JSON)                         │
-  │  POST /api/match              (JSON: resumeId + jdId)  ──────┤
-  │  POST /api/workflow/run       (JSON: resumeId + jdId)  ──────┤
-  │  POST /api/workflow/full      (JSON: resumeId + jdId)  ──────┤
-  │  GET  /api/workflow/full/{id} (DB + agent-service calls) ────┤
-  │  GET  /api/workflow/status/{threadId}  ──────────────────────┤
-  │  POST /api/interviews/start            ──────────────────────┤
-  │  POST /api/interviews/{id}/answer      ──────────────────────┤
-  │  GET  /api/interviews/{id}             ──────────────────────┤
-  │  POST /api/interviews/{id}/end         ──────────────────────┤
-  │  GET  /api/match/{id}         (DB lookup, no agent call)     │
-  │  GET  /api/agent-runs/recent  (DB lookup, no agent call)     │
-  │                                                               │
-  ▼                                                               │
-Agent Service :8001  ◄───────────────────────────────────────────┘
+  │  POST /api/resumes/parse          (multipart) ───────────────────┐
+  │  GET  /api/resumes/{id}           (DB lookup)                    │
+  │  POST /api/jds/parse              (JSON)  ────────────────────── │
+  │  GET  /api/jds/{id}               (DB lookup)                    │
+  │  POST /api/match                  (JSON: resumeId + jdId)  ──────┤
+  │  GET  /api/match/{id}             (DB lookup, no agent call)     │
+  │  POST /api/rewrite                (JSON: resumeId + jdId + …) ──►│
+  │  GET  /api/rewrite/{id}           (DB lookup)                    │
+  │  POST /api/workflow/run           (JSON: resumeId + jdId)  ──────┤
+  │  POST /api/workflow/full          (JSON: resumeId + jdId)  ──────┤
+  │  GET  /api/workflow/full/{id}     (DB + agent-service calls) ────┤
+  │  GET  /api/workflow/status/{threadId}  ────────────────────────── │
+  │  POST /api/interviews/start            ──────────────────────────┤
+  │  POST /api/interviews/{id}/answer      ──────────────────────────┤
+  │  GET  /api/interviews/{id}             ──────────────────────────┤
+  │  POST /api/interviews/{id}/end         ──────────────────────────┤
+  │  GET  /api/agent-runs/recent      (DB lookup, no agent call)     │
+  │                                                                   │
+  ▼                                                                   │
+Agent Service :8001  ◄─────────────────────────────────────────────── ┘
   │
-  ├── POST /api/resume/parse          (multipart, forwarded bytes)
-  ├── POST /api/jd/parse              (JSON, text or url)
-  ├── POST /api/match                 (JSON: resume + jd objects)
-  ├── POST /api/rewrite               (JSON: resume + jd + match_result)
-  ├── POST /api/pipeline/run          (multipart: file + jd_text)
-  ├── POST /api/workflow/run          (JSON: file path + jd text)
-  ├── GET  /api/workflow/status/{id}  (checkpoint poll, read-only)
-  ├── POST /api/interview/start       (JSON: jd + resume + num_questions)
-  ├── POST /api/interview/{id}/answer (JSON: answer)
-  ├── GET  /api/interview/{id}        (live session state)
-  ├── POST /api/interview/{id}/end    (summary + average scores)
-  ├── GET  /api/workflow/visualize    (Mermaid JSON)
-  └── GET  /api/workflow/visualize/html (rendered diagram page)
+  ├── Health
+  │   ├── GET  /health
+  │   └── GET  /health/llm
+  │
+  ├── Resume / JD
+  │   ├── POST /api/resume/parse          (multipart, forwarded bytes)
+  │   └── POST /api/jd/parse              (JSON, text or url)
+  │
+  ├── Match / Rewrite
+  │   ├── POST /api/match                 (JSON: resume + jd objects)
+  │   └── POST /api/rewrite               (JSON: resume + jd + match_result)
+  │
+  ├── Pipeline / Workflow
+  │   ├── POST /api/pipeline/run          (multipart: file + jd_text)
+  │   ├── POST /api/workflow/run          (JSON: file path + jd text)
+  │   ├── GET  /api/workflow/status/{id}  (checkpoint poll, read-only)
+  │   ├── GET  /api/workflow/visualize    (Mermaid JSON)
+  │   └── GET  /api/workflow/visualize/html
+  │
+  ├── RAG
+  │   ├── POST /api/rag/index             (index question bank into Qdrant)
+  │   └── POST /api/rag/search            (semantic search over questions)
+  │
+  ├── Interview
+  │   ├── POST /api/interview/start
+  │   ├── POST /api/interview/{id}/answer
+  │   ├── GET  /api/interview/{id}
+  │   ├── POST /api/interview/{id}/end
+  │   └── POST /api/interview/{id}/end-with-review
+  │
+  ├── Coach
+  │   └── POST /api/coach/review          (standalone CoachAgent review)
+  │
+  └── Agent Runs
+      └── POST /api/agent-runs            (passthrough, Spring Boot persists)
   │
   ▼
 LangGraph Workflow (in-process)
@@ -1022,10 +1354,18 @@ LangGraph Workflow (in-process)
   └── MemorySaver checkpoints every node transition under thread_id
   │
   ▼
+Qdrant :6333  (vector store)
+  ├── interview_questions  (20 questions, 384-dim, all-MiniLM-L6-v2)
+  └── ats_keywords         (~125 keywords, 3 industries, 8 roles)
+  │
+  ▼
 Anthropic Claude API  (claude-haiku-4-5-20251001)
-  ├── resume_agent:  full structured parse (PDF/DOCX text → ParsedResume)
-  ├── jd_agent:      full structured parse (text/URL → ParsedJobDescription)
-  └── match_agent:   gap analysis only (skill/exp/keyword scores are pure Python)
+  ├── resume_agent:    full structured parse (PDF/DOCX text → ParsedResume)
+  ├── jd_agent:        full structured parse (text/URL → ParsedJobDescription)
+  ├── match_agent:     gap analysis only (skill/exp/keyword scores are pure Python)
+  ├── rewrite_agent:   bullet rewrite + fidelity check retry
+  ├── interview_agent: answer evaluation + follow-up/re-answer generation
+  └── coach_agent:     per-question STAR/depth analysis + readiness verdict
 ```
 
 **Direct agent-service access:** browser clients may call `POST /api/pipeline/run`
