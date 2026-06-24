@@ -80,22 +80,26 @@ function TypeBadge({ type }: { type: string }) {
 }
 
 function EvaluationCard({ eval: ev }: { eval: AnswerEvaluation }) {
+  // Normalise arrays defensively — API fields can be missing on partial responses
+  const strengths    = ev.strengths    ?? []
+  const improvements = ev.improvements ?? []
+
   return (
     <div className="mx-9 my-2 rounded-xl border border-gray-200 bg-white p-4 shadow-sm space-y-4">
       {/* Scores */}
       <div className="grid grid-cols-4 gap-2">
-        <ScoreBadge label="Relevance"  score={ev.relevance_score} />
-        <ScoreBadge label="Depth"      score={ev.depth_score} />
-        <ScoreBadge label="Comm."      score={ev.communication_score} />
-        <ScoreBadge label="Overall"    score={ev.overall_score} />
+        <ScoreBadge label="Relevance"  score={ev.relevance_score    ?? 0} />
+        <ScoreBadge label="Depth"      score={ev.depth_score        ?? 0} />
+        <ScoreBadge label="Comm."      score={ev.communication_score ?? 0} />
+        <ScoreBadge label="Overall"    score={ev.overall_score      ?? 0} />
       </div>
 
       {/* Strengths */}
-      {ev.strengths.length > 0 && (
+      {strengths.length > 0 && (
         <div>
           <p className="mb-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Strengths</p>
           <ul className="space-y-1">
-            {ev.strengths.map((s, i) => (
+            {strengths.map((s, i) => (
               <li key={i} className="flex items-start gap-2 text-xs text-gray-700">
                 <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0 text-green-500" />
                 {s}
@@ -106,11 +110,11 @@ function EvaluationCard({ eval: ev }: { eval: AnswerEvaluation }) {
       )}
 
       {/* Improvements */}
-      {ev.improvements.length > 0 && (
+      {improvements.length > 0 && (
         <div>
           <p className="mb-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">Improvements</p>
           <ul className="space-y-1">
-            {ev.improvements.map((imp, i) => (
+            {improvements.map((imp, i) => (
               <li key={i} className="flex items-start gap-2 text-xs text-gray-700">
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-yellow-500" />
                 {imp}
@@ -163,7 +167,7 @@ export default function InterviewPage() {
   // Auto-scroll on new messages or typing indicator
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [sessionData?.conversation_history.length, answerMutation.isPending])
+  }, [sessionData?.conversation_history?.length, answerMutation.isPending])
 
   // Update local session when mutation returns updated Python agent state.
   // Answer/end responses are the raw Python state (not wrapped), so parse directly.
@@ -229,10 +233,18 @@ export default function InterviewPage() {
     )
   }
 
-  const { questions, answers, conversation_history, current_question_index, status, jd_title } = sessionData
+  // Destructure with fallbacks — every field can be undefined on a partial response
+  const questions            = sessionData.questions            ?? []
+  const answers              = sessionData.answers              ?? []
+  const conversation_history = sessionData.conversation_history ?? []
+  const current_question_index = sessionData.current_question_index ?? 0
+  const status               = sessionData.status               ?? ''
+  const jd_title             = sessionData.jd_title             ?? ''
 
   const isCompleted = status === 'completed'
-  const currentQ    = questions[Math.min(current_question_index, questions.length - 1)]
+  const currentQ    = questions.length > 0
+                        ? questions[Math.min(current_question_index, questions.length - 1)]
+                        : undefined
   const totalQ      = questions.length
   const answeredQ   = answers.length
 
