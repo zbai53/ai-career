@@ -136,6 +136,17 @@ function formatTime(iso: string): string {
 // Page
 // ---------------------------------------------------------------------------
 
+// Type for the local display message list (a subset of ConversationTurn)
+type DisplayMessage = { role: 'interviewer' | 'candidate'; content: string }
+
+/** Extract a flat DisplayMessage list from a parsed session. */
+function toDisplayMessages(session: SessionData): DisplayMessage[] {
+  return (session.conversation_history ?? []).map((t) => ({
+    role: t.role,
+    content: t.content,
+  }))
+}
+
 export default function InterviewPage() {
   const { id } = useParams<{ id: string }>()   // UUID string from the URL
   const navigate = useNavigate()
@@ -143,13 +154,23 @@ export default function InterviewPage() {
   // id IS the UUID session_id — no numeric conversion
   const { data: entity, isPending: loadingSession, isError } = useGetInterview(id ?? null)
 
-  // Parse session data from the Python agent_state in the GET response
+  // sessionData holds metadata (questions, answers, status, etc.)
   const [sessionData, setSessionData] = useState<SessionData | null>(null)
 
+  // displayMessages is the source of truth for the chat UI.
+  // It is synced from conversation_history on load, then updated optimistically
+  // on submit and replaced with the API response when it arrives.
+  const [displayMessages,      setDisplayMessages]      = useState<DisplayMessage[]>([])
+  const [isWaitingForResponse, setIsWaitingForResponse] = useState(false)
+
+  // Sync both sessionData and displayMessages when the entity loads or refreshes
   useEffect(() => {
     if (entity?.agent_state) {
       const parsed = parseSession(entity.agent_state)
-      if (parsed) setSessionData(parsed)
+      if (parsed) {
+        setSessionData(parsed)
+        setDisplayMessages(toDisplayMessages(parsed))
+      }
     }
   }, [entity])
 
@@ -159,30 +180,46 @@ export default function InterviewPage() {
   const answerMutation = useAnswerInterview(sessionUUID)
   const endMutation    = useEndInterview(sessionUUID)
 
-  const [answer,         setAnswer]         = useState('')
-  const [showEndDialog,  setShowEndDialog]  = useState(false)
+  const [answer,        setAnswer]        = useState('')
+  const [showEndDialog, setShowEndDialog] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const MAX_CHARS = 2000
 
-  // Auto-scroll on new messages or typing indicator
+  // Auto-scroll whenever a new message is appended or the typing indicator appears
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [sessionData?.conversation_history?.length, answerMutation.isPending])
+  }, [displayMessages.length, isWaitingForResponse])
 
-  // Update local session when mutation returns updated Python agent state.
-  // Answer/end responses are the raw Python state (not wrapped), so parse directly.
+  // Sync display messages and session metadata from a successful mutation response,
+  // then clear the waiting state so the input is re-enabled.
   function handleMutationSuccess(updated: Record<string, unknown>) {
     const parsed = parseSession(updated)
-    if (parsed) setSessionData(parsed)
+    if (parsed) {
+      setSessionData(parsed)
+      setDisplayMessages(toDisplayMessages(parsed))
+    }
+    setIsWaitingForResponse(false)
   }
 
   function handleSubmit() {
-    if (!answer.trim() || answerMutation.isPending) return
+    if (!answer.trim() || isWaitingForResponse) return
     const text = answer.trim()
     setAnswer('')
+
+    // Optimistic update: show candidate message immediately and display typing indicator
+    setDisplayMessages((prev) => [...prev, { role: 'candidate', content: text }])
+    setIsWaitingForResponse(true)
+
     answerMutation.mutate(
       { answer: text },
-      { onSuccess: (data) => handleMutationSuccess(data) }
+      {
+        onSuccess: (data) => handleMutationSuccess(data),
+        onError: () => {
+          // Revert the optimistic message so the user can retry
+          setIsWaitingForResponse(false)
+          setDisplayMessages((prev) => prev.slice(0, -1))
+        },
+      }
     )
   }
 
@@ -248,9 +285,8 @@ export default function InterviewPage() {
   const totalQ      = questions.length
   const answeredQ   = answers.length
 
-  // Build evaluation map: nth candidate message → evaluation
-  const candidateTurns = conversation_history.filter((t) => t.role === 'candidate')
-  const evalByTurnIdx  = new Map(answers.map((ev, i) => [i, ev]))
+  // Map the nth candidate turn to its evaluation (0-indexed)
+  const evalByTurnIdx = new Map(answers.map((ev, i) => [i, ev]))
 
   return (
     <div className="flex h-[calc(100vh-4rem)] flex-col">
@@ -290,22 +326,19 @@ export default function InterviewPage() {
 
       {/* ── Chat area ───────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto bg-gray-50 px-4 py-6 space-y-4">
-        {conversation_history.map((turn, idx) => {
+        {displayMessages.map((turn, idx) => {
           const isCandidateTurn = turn.role === 'candidate'
-          // Find which nth candidate message this is to look up evaluation
+          // Count how many candidate messages appeared BEFORE this index to get
+          // the 0-based candidate turn index for the evaluation lookup.
           const candidateIdx = isCandidateTurn
-            ? candidateTurns.findIndex((t) => t === turn)
+            ? displayMessages.slice(0, idx).filter((t) => t.role === 'candidate').length
             : -1
           const evaluation = candidateIdx >= 0 ? evalByTurnIdx.get(candidateIdx) : undefined
 
           return (
             <div key={idx}>
-              <ChatBubble
-                role={turn.role}
-                content={turn.content}
-                timestamp={sessionData.started_at ? undefined : undefined}
-              />
-              {/* Inline evaluation card after candidate messages */}
+              <ChatBubble role={turn.role} content={turn.content} />
+              {/* Inline evaluation card after candidate messages (only once server responds) */}
               {isCandidateTurn && evaluation && (
                 <EvaluationCard eval={evaluation} />
               )}
@@ -313,8 +346,8 @@ export default function InterviewPage() {
           )
         })}
 
-        {/* Typing indicator while awaiting response */}
-        {answerMutation.isPending && <TypingIndicator />}
+        {/* Typing indicator — shown immediately after the candidate message is appended */}
+        {isWaitingForResponse && <TypingIndicator />}
 
         {/* Interview complete banner */}
         {isCompleted && (
@@ -348,9 +381,13 @@ export default function InterviewPage() {
             onChange={(e) => setAnswer(e.target.value.slice(0, MAX_CHARS))}
             placeholder="Type your answer here…"
             rows={4}
-            disabled={answerMutation.isPending}
+            disabled={isWaitingForResponse}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) handleSubmit()
+              // Enter submits; Shift+Enter inserts a newline as usual
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault()
+                handleSubmit()
+              }
             }}
             className="w-full resize-none rounded-xl border border-gray-300 px-3 py-2.5 text-sm text-gray-900 placeholder-gray-400 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-60"
           />
@@ -360,13 +397,13 @@ export default function InterviewPage() {
               {answer.length}/{MAX_CHARS}
             </span>
             <div className="flex items-center gap-2">
-              <span className="hidden text-xs text-gray-400 sm:block">⌘ Enter to submit</span>
+              <span className="hidden text-xs text-gray-400 sm:block">Shift+Enter for newline</span>
               <button
                 onClick={handleSubmit}
-                disabled={!answer.trim() || answerMutation.isPending}
+                disabled={!answer.trim() || isWaitingForResponse}
                 className="flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {answerMutation.isPending ? (
+                {isWaitingForResponse ? (
                   <><Loader2 className="h-4 w-4 animate-spin" /> Evaluating…</>
                 ) : (
                   'Submit Answer'
