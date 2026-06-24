@@ -1,11 +1,11 @@
 import { useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { FileEdit, MessageSquare, AlertCircle, BarChart2 } from 'lucide-react'
+import { FileEdit, MessageSquare, AlertCircle, BarChart2, Loader2 } from 'lucide-react'
 import RadarChart from '../components/RadarChart'
 import ScoreCard from '../components/ScoreCard'
 import GapAnalysis from '../components/GapAnalysis'
 import EmptyState from '../components/EmptyState'
-import { useGetMatch } from '../api/hooks'
+import { useGetMatch, useStartInterview } from '../api/hooks'
 import { useWorkflowStore } from '../stores/workflowStore'
 
 // ---------------------------------------------------------------------------
@@ -48,10 +48,11 @@ function Skeleton() {
 export default function MatchResultPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const setMatchId = useWorkflowStore((s) => s.setMatchId)
+  const { currentResumeId, currentJDId, setMatchId, setInterviewId } = useWorkflowStore()
 
   const matchId = id === 'latest' ? null : Number(id)
   const { data, isPending, isError, error } = useGetMatch(matchId)
+  const startInterview = useStartInterview()
 
   // Persist match id to store once when the URL param changes — not on every render.
   // Using the URL `id` (a stable string) as the dependency avoids an infinite loop
@@ -105,8 +106,18 @@ export default function MatchResultPage() {
 
   const needsRewrite = overall < 70
 
-  // For interview navigation we need a session id — start from /jd to create one
-  const interviewTarget = '/jd'
+  function handleStartInterview() {
+    if (!currentResumeId || !currentJDId) return
+    startInterview.mutate(
+      { resumeId: currentResumeId, jdId: currentJDId },
+      {
+        onSuccess: (session) => {
+          setInterviewId(session.sessionId)
+          navigate(`/interview/${session.sessionId}`)
+        },
+      }
+    )
+  }
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
@@ -170,10 +181,15 @@ export default function MatchResultPage() {
         </button>
 
         <button
-          onClick={() => navigate(interviewTarget)}
-          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+          onClick={handleStartInterview}
+          disabled={!currentResumeId || !currentJDId || startInterview.isPending}
+          className="flex flex-1 items-center justify-center gap-2 rounded-lg border border-gray-300 px-4 py-3 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <MessageSquare className="h-4 w-4" />
+          {startInterview.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <MessageSquare className="h-4 w-4" />
+          )}
           Practice Interview
         </button>
       </div>
