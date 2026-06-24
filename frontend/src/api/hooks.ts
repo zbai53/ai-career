@@ -22,10 +22,12 @@ export interface MatchResult {
   skillScore: number
   experienceScore: number
   keywordScore: number
-  gapAnalysis: string
-  ats_present: string[]
-  ats_missing: string[]
-  ats_coverage_percent: number
+  /** Stored as a JSON string (full Python agent response) in the Spring Boot entity. */
+  gapAnalysis?: string
+  /** Present only in the POST /match response; absent from GET /match/{id}. */
+  ats_present?: string[]
+  ats_missing?: string[]
+  ats_coverage_percent?: number
 }
 
 export interface RewriteResult {

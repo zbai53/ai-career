@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { FileEdit, MessageSquare, AlertCircle, BarChart2 } from 'lucide-react'
 import RadarChart from '../components/RadarChart'
@@ -47,15 +48,17 @@ function Skeleton() {
 export default function MatchResultPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { currentResumeId, currentJDId, setMatchId } = useWorkflowStore()
+  const setMatchId = useWorkflowStore((s) => s.setMatchId)
 
   const matchId = id === 'latest' ? null : Number(id)
-  const { data, isPending, isError, error } = useGetMatch(
-    id === 'latest' ? null : matchId
-  )
+  const { data, isPending, isError, error } = useGetMatch(matchId)
 
-  // Persist match id to store whenever we land on this page with a real id
-  if (data?.id && matchId) setMatchId(data.id)
+  // Persist match id to store once when the URL param changes — not on every render.
+  // Using the URL `id` (a stable string) as the dependency avoids an infinite loop
+  // that would occur if we called setMatchId unconditionally during render.
+  useEffect(() => {
+    if (matchId) setMatchId(matchId)
+  }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---- 404 ----
   if (isError) {
@@ -87,14 +90,18 @@ export default function MatchResultPage() {
 
   if (!data) return null
 
-  const gapRaw = (data as unknown as { gapAnalysis: string | Record<string, unknown> }).gapAnalysis
-  const gap    = parseGapAnalysis(gapRaw ?? {})
+  // gapAnalysis is stored as the full Python response JSON string.
+  // ATS fields live inside it, not as top-level entity fields.
+  const gap = parseGapAnalysis(data.gapAnalysis ?? '')
 
-  const overall   = Number(data.overallScore)   || 0
-  const skill     = Number(data.skillScore)      || 0
-  const exp       = Number(data.experienceScore) || 0
-  const keyword   = Number(data.keywordScore)    || 0
-  const atsCov    = Number(data.ats_coverage_percent) || 0
+  const overall = Number(data.overallScore)    || 0
+  const skill   = Number(data.skillScore)      || 0
+  const exp     = Number(data.experienceScore) || 0
+  const keyword = Number(data.keywordScore)    || 0
+
+  // ATS data is embedded in the parsed gap object
+  const atsMissing = (gap.ats_missing  as string[] | undefined) ?? []
+  const atsCov     = Number(gap.ats_coverage_percent) || 0
 
   const needsRewrite = overall < 70
 
@@ -124,13 +131,13 @@ export default function MatchResultPage() {
       </div>
 
       {/* ATS badges */}
-      {data.ats_missing?.length > 0 && (
+      {atsMissing.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-2">
           <p className="text-sm font-semibold text-amber-800">
-            ATS keywords missing from your resume ({data.ats_missing.length})
+            ATS keywords missing from your resume ({atsMissing.length})
           </p>
           <div className="flex flex-wrap gap-2">
-            {data.ats_missing.map((kw) => (
+            {atsMissing.map((kw) => (
               <span
                 key={kw}
                 className="inline-block rounded-full bg-amber-100 px-2.5 py-0.5 text-xs font-medium text-amber-800 ring-1 ring-amber-200"
