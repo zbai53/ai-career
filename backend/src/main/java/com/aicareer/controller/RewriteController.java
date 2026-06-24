@@ -18,6 +18,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.util.Map;
 
 @RestController
@@ -109,6 +110,7 @@ public class RewriteController {
                         request.resumeId(), request.jdId(), logEx.getMessage());
             }
 
+            ((ObjectNode) root).put("id", entity.getId());
             return ResponseEntity.ok(root);
 
         } catch (Exception e) {

@@ -148,18 +148,35 @@ JSONB columns store the full Pydantic model dumps from the agent service. Flyway
 
 **Total: 225 tests**
 
-| Suite | Tests | Scope |
-|---|---|---|
-| Python — pytest | 211 | All 6 agents, RAG, LangGraph workflow, fidelity checker, full pipeline |
-| Spring Boot — Maven | 14 | Controller + mapper integration tests |
+| Suite | Tests | Result | Scope |
+|---|---|---|---|
+| Python — pytest | 211 | ✓ PASS (~47s) | All 6 agents, RAG, LangGraph workflow, fidelity checker, full pipeline |
+| Spring Boot — Maven | 14 | ✓ PASS | Controller + mapper integration tests |
 
-All 225 tests pass. Python tests run in ~48s without any external network calls (Claude API fully mocked via `unittest.mock.patch`). Spring Boot tests use an in-memory H2 database.
+All 225 tests pass. Python tests run in ~47s without any external network calls (Claude API fully mocked via `unittest.mock.patch`). Spring Boot tests use an in-memory H2 database.
 
 Notable test classes:
 - `TestMultiTurnLogic` (7 tests) — follow-up cap, re-answer routing, conversation history integrity
 - `TestFidelityCheckFlagsHallucination` — entity injection detection
 - `TestWorkflowIntegration` — full LangGraph graph execution with mocked agents
 - `TestMatchAgent::test_ats_keywords_included_in_result` — ATS coverage in match output
+
+---
+
+## Codebase Metrics
+
+| Metric | Value |
+|---|---|
+| Python source files | 22 files (`agent-service/app/**/*.py`) |
+| Python lines of code | ~7,370 lines |
+| Largest files | `workflow.py` (989), `main.py` (890), `match_agent.py` (701) |
+| Spring Boot (Java) controllers | 7 controllers |
+| Database tables | 6 (users, resumes, job_descriptions, match_results, interview_sessions, agent_runs) |
+| Flyway migrations | 4 (V1–V4) |
+| Qdrant collections | 2 (`interview_questions`, `ats_keywords`) |
+| Interview questions indexed | 20 (8 behavioral, 12 technical; `all-MiniLM-L6-v2`, 384-dim) |
+| ATS keywords | ~125 across 3 industries × 8 roles |
+| Docker services | 4 (PostgreSQL 16, Redis 7, Qdrant v1.9.4, MinIO) |
 
 ---
 

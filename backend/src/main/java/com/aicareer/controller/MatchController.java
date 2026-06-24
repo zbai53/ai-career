@@ -18,6 +18,8 @@ import org.springframework.web.bind.annotation.*;
 import java.math.BigDecimal;
 import java.util.Map;
 
+import com.fasterxml.jackson.databind.node.ObjectNode;
+
 @RestController
 @RequestMapping("/api/match")
 public class MatchController {
@@ -90,6 +92,7 @@ public class MatchController {
                         request.resumeId(), request.jdId(), logEx.getMessage());
             }
 
+            ((ObjectNode) root).put("id", entity.getId());
             return ResponseEntity.ok(root);
 
         } catch (Exception e) {

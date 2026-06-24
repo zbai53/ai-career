@@ -1,0 +1,48 @@
+%PDF-1.4
+1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj
+2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj
+3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>endobj
+4 0 obj<</Length 1200>>
+stream
+BT
+/F1 11 Tf
+50 750 Td (Jordan Lee) Tj
+0 -15 Td (jordan.lee@email.com  |  416-555-0100  |  Toronto, ON  |  github.com/jlee) Tj
+0 -25 Td (SUMMARY) Tj
+0 -15 Td (Backend developer with 4 years of experience building scalable APIs and microservices.) Tj
+0 -15 Td (Expertise in Python, Java, Spring Boot, REST API design, PostgreSQL, and Docker.) Tj
+0 -25 Td (EXPERIENCE) Tj
+0 -15 Td (Senior Backend Developer  |  ByteFlow Inc  |  Toronto, ON  |  Jan 2022 - Present) Tj
+0 -15 Td (- Built high-throughput REST APIs in Python and Java serving 500k daily requests) Tj
+0 -15 Td (- Designed microservices architecture reducing deployment time by 40 percent) Tj
+0 -15 Td (- Optimized PostgreSQL queries cutting P95 latency from 800ms to 120ms) Tj
+0 -15 Td (- Containerized services with Docker and orchestrated with Kubernetes) Tj
+0 -15 Td (- Implemented CI/CD pipelines using GitHub Actions and Jenkins) Tj
+0 -25 Td (Backend Developer  |  StartupXYZ  |  Remote  |  Jun 2020 - Dec 2021) Tj
+0 -15 Td (- Developed RESTful services in Spring Boot integrated with Redis cache) Tj
+0 -15 Td (- Built Kafka message queue consumers for event-driven workflows) Tj
+0 -15 Td (- Wrote unit and integration tests achieving 90 percent code coverage) Tj
+0 -25 Td (SKILLS) Tj
+0 -15 Td (Languages: Python, Java, SQL, Bash) Tj
+0 -15 Td (Frameworks: Spring Boot, FastAPI, Django) Tj
+0 -15 Td (Databases: PostgreSQL, MySQL, Redis, MongoDB) Tj
+0 -15 Td (Infrastructure: Docker, Kubernetes, AWS, CI/CD, Kafka, RabbitMQ) Tj
+0 -15 Td (Tools: Git, Maven, Gradle, GitHub Actions, Jenkins) Tj
+0 -25 Td (EDUCATION) Tj
+0 -15 Td (B.Sc. Computer Science  |  University of Toronto  |  2016 - 2020) Tj
+ET
+endstream
+endobj
+5 0 obj<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000274 00000 n 
+0000001526 00000 n 
+trailer<</Size 6/Root 1 0 R>>
+startxref
+1612
+%%EOF
