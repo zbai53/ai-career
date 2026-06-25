@@ -10,3 +10,9 @@
 .page-enter {
   animation: page-fade-in 0.18s ease-out both;
 }
+
+/* Smooth tab indicator */
+@keyframes tab-slide-in {
+  from { transform: translateX(-50%) scaleX(0); }
+  to   { transform: translateX(-50%) scaleX(1); }
+}

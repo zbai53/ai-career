@@ -47,7 +47,7 @@ export default function ChatBubble({ role, content, timestamp }: ChatBubbleProps
       </div>
 
       {/* Bubble */}
-      <div className={`max-w-[75%] ${isInterviewer ? '' : 'items-end flex flex-col'}`}>
+      <div className={`max-w-[90%] sm:max-w-[75%] ${isInterviewer ? '' : 'items-end flex flex-col'}`}>
         <div
           className={`rounded-2xl px-4 py-3 text-sm leading-relaxed
             ${isInterviewer

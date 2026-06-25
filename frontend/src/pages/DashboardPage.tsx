@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { FileUp, ClipboardList, Mic, BarChart2, FileText, Users, TrendingUp } from 'lucide-react'
 import ActivityCard from '../components/ActivityCard'
+import WorkflowVisualization from '../components/WorkflowVisualization'
 import { useAuthStore } from '../stores/authStore'
 import { useWorkflowStore } from '../stores/workflowStore'
 
@@ -82,9 +83,16 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 export default function DashboardPage() {
   const navigate = useNavigate()
   const user = useAuthStore((s) => s.user)
-  const { currentResumeId, currentJDId } = useWorkflowStore()
+  const { currentResumeId, currentJDId, currentMatchId, currentInterviewId } = useWorkflowStore()
 
   const hasResumeAndJD = currentResumeId !== null && currentJDId !== null
+
+  const completedSteps = [
+    currentResumeId    ? 'upload'    : null,
+    currentJDId        ? 'jd'        : null,
+    currentMatchId     ? 'match'     : null,
+    currentInterviewId ? 'interview' : null,
+  ].filter((s): s is string => s !== null)
   const firstName = user?.name ?? 'there'
 
   return (
@@ -140,6 +148,13 @@ export default function DashboardPage() {
             onClick={() => navigate('/jd')}
             disabled={!hasResumeAndJD}
           />
+        </div>
+      </Section>
+
+      {/* Workflow Progress */}
+      <Section title="Workflow Progress">
+        <div className="overflow-hidden rounded-xl border border-gray-200 bg-white" style={{ height: 360 }}>
+          <WorkflowVisualization completedSteps={completedSteps} />
         </div>
       </Section>
 

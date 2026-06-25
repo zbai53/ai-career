@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Link2, FileText, Loader2, ArrowRight, CheckCircle2, AlertCircle } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import { useParseJD, useMatch } from '../api/hooks'
 import { useWorkflowStore } from '../stores/workflowStore'
 
@@ -87,12 +88,10 @@ export default function JDInputPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Input Job Description</h1>
-        <p className="mt-1 text-gray-500">
-          Paste the full job description or provide a URL. Our AI will extract structured data.
-        </p>
-      </div>
+      <PageHeader
+        title="Input Job Description"
+        subtitle="Paste the full job description or provide a URL. Our AI will extract structured data."
+      />
 
       {/* Input panel */}
       {!parseJD.isSuccess && (

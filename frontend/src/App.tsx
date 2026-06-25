@@ -1,6 +1,8 @@
 import { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Layout from './components/Layout'
+import ErrorBoundary from './components/ErrorBoundary'
+import LoadingPage from './components/LoadingPage'
 
 const DashboardPage    = lazy(() => import('./pages/DashboardPage'))
 const ResumeUploadPage = lazy(() => import('./pages/ResumeUploadPage'))
@@ -10,32 +12,28 @@ const RewritePage      = lazy(() => import('./pages/RewritePage'))
 const InterviewPage    = lazy(() => import('./pages/InterviewPage'))
 const ReviewPage       = lazy(() => import('./pages/ReviewPage'))
 const LoginPage        = lazy(() => import('./pages/LoginPage'))
-
-function PageLoader() {
-  return (
-    <div className="flex h-full items-center justify-center">
-      <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
-    </div>
-  )
-}
+const WorkflowPage     = lazy(() => import('./pages/WorkflowPage'))
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Suspense fallback={<PageLoader />}>
-        <Routes>
-          <Route path="/login" element={<LoginPage />} />
-          <Route element={<Layout />}>
-            <Route path="/"              element={<DashboardPage />} />
-            <Route path="/upload"        element={<ResumeUploadPage />} />
-            <Route path="/jd"            element={<JDInputPage />} />
-            <Route path="/match/:id"     element={<MatchResultPage />} />
-            <Route path="/rewrite/:id"   element={<RewritePage />} />
-            <Route path="/interview/:id" element={<InterviewPage />} />
-            <Route path="/review/:id"    element={<ReviewPage />} />
-          </Route>
-        </Routes>
-      </Suspense>
-    </BrowserRouter>
+    <ErrorBoundary>
+      <BrowserRouter>
+        <Suspense fallback={<LoadingPage />}>
+          <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route element={<Layout />}>
+              <Route path="/"              element={<DashboardPage />} />
+              <Route path="/upload"        element={<ResumeUploadPage />} />
+              <Route path="/jd"            element={<JDInputPage />} />
+              <Route path="/match/:id"     element={<MatchResultPage />} />
+              <Route path="/rewrite/:id"   element={<RewritePage />} />
+              <Route path="/interview/:id" element={<InterviewPage />} />
+              <Route path="/review/:id"    element={<ReviewPage />} />
+              <Route path="/workflow"      element={<WorkflowPage />} />
+            </Route>
+          </Routes>
+        </Suspense>
+      </BrowserRouter>
+    </ErrorBoundary>
   )
 }

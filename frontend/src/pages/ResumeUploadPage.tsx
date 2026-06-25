@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { CheckCircle2, ArrowRight, RefreshCw } from 'lucide-react'
 import FileUpload from '../components/FileUpload'
+import PageHeader from '../components/PageHeader'
 import { useParseResume } from '../api/hooks'
 import { useWorkflowStore } from '../stores/workflowStore'
 
@@ -94,12 +95,10 @@ export default function ResumeUploadPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Upload Resume</h1>
-        <p className="mt-1 text-gray-500">
-          Upload your resume in PDF or DOCX format. Our AI will extract structured data from it.
-        </p>
-      </div>
+      <PageHeader
+        title="Upload Resume"
+        subtitle="Upload your resume in PDF or DOCX format. Our AI will extract structured data from it."
+      />
 
       {/* Upload area — hidden once we have a result */}
       {!isSuccess && (

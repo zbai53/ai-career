@@ -5,6 +5,7 @@ import RadarChart from '../components/RadarChart'
 import ScoreCard from '../components/ScoreCard'
 import GapAnalysis from '../components/GapAnalysis'
 import EmptyState from '../components/EmptyState'
+import PageHeader from '../components/PageHeader'
 import { useGetMatch, useStartInterview } from '../api/hooks'
 import { useWorkflowStore } from '../stores/workflowStore'
 
@@ -121,7 +122,7 @@ export default function MatchResultPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-8">
-      <h1 className="text-2xl font-bold text-gray-900">Match Results</h1>
+      <PageHeader title="Match Results" subtitle="See how well your resume matches this job description." />
 
       {/* Radar + overall score */}
       <div className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">

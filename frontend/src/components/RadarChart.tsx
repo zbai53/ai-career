@@ -43,13 +43,13 @@ export default function RadarChart({
   return (
     <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center sm:gap-8">
       {/* Radar */}
-      <div className="w-full max-w-xs shrink-0">
-        <ResponsiveContainer width="100%" height={220}>
+      <div className="w-full max-w-xs shrink-0 h-44 sm:h-56">
+        <ResponsiveContainer width="100%" height="100%">
           <RechartsRadar data={data} outerRadius="70%">
             <PolarGrid stroke="#e5e7eb" />
             <PolarAngleAxis
               dataKey="dimension"
-              tick={{ fontSize: 12, fill: '#6b7280' }}
+              tick={{ fontSize: 11, fill: '#6b7280' }}
             />
             <Tooltip
               formatter={(value: number) => [`${value}`, 'Score']}
