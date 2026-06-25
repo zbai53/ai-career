@@ -13,6 +13,7 @@ const InterviewPage    = lazy(() => import('./pages/InterviewPage'))
 const ReviewPage       = lazy(() => import('./pages/ReviewPage'))
 const LoginPage        = lazy(() => import('./pages/LoginPage'))
 const WorkflowPage     = lazy(() => import('./pages/WorkflowPage'))
+const NotFoundPage     = lazy(() => import('./pages/NotFoundPage'))
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
               <Route path="/interview/:id" element={<InterviewPage />} />
               <Route path="/review/:id"    element={<ReviewPage />} />
               <Route path="/workflow"      element={<WorkflowPage />} />
+            <Route path="*"             element={<NotFoundPage />} />
             </Route>
           </Routes>
         </Suspense>

@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import {
   CheckCircle2, AlertTriangle, BookOpen, ChevronDown,
-  RotateCcw, LayoutDashboard, Loader2, AlertCircle, Trophy, Star,
+  RotateCcw, LayoutDashboard, AlertCircle, Trophy, Star,
 } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import STARAnalysis from '../components/STARAnalysis'
 import TechnicalAnalysis from '../components/TechnicalAnalysis'
 import ScoreBadge from '../components/ScoreBadge'
@@ -334,8 +335,17 @@ export default function ReviewPage() {
   if (!endData) {
     if (isPending) {
       return (
-        <div className="flex h-full items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+        <div className="mx-auto max-w-2xl space-y-6 animate-pulse">
+          <div className="space-y-2">
+            <div className="h-3 w-28 rounded bg-gray-200" />
+            <div className="h-8 w-56 rounded bg-gray-200" />
+            <div className="h-4 w-72 rounded bg-gray-100" />
+          </div>
+          <div className="h-40 rounded-xl bg-gray-200" />
+          <div className="h-6 w-48 rounded bg-gray-200" />
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-20 rounded-xl bg-gray-100" />
+          ))}
         </div>
       )
     }
@@ -391,7 +401,10 @@ export default function ReviewPage() {
 
   return (
     <div className="mx-auto max-w-2xl space-y-10 pb-16">
-      <h1 className="text-2xl font-bold text-gray-900">Interview Review</h1>
+      <PageHeader
+        title="Interview Review"
+        subtitle="AI-powered coaching feedback on your interview performance."
+      />
 
       {/* ── Summary card ───────────────────────────────────────────────── */}
       <section className="rounded-xl border border-gray-200 bg-white p-6 shadow-sm">

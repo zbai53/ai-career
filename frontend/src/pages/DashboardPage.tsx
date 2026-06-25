@@ -1,31 +1,36 @@
 import { useNavigate } from 'react-router-dom'
-import { FileUp, ClipboardList, Mic, BarChart2, FileText, Users, TrendingUp } from 'lucide-react'
+import {
+  FileUp, ClipboardList, Mic, BarChart2, FileText, Users, TrendingUp,
+} from 'lucide-react'
 import ActivityCard from '../components/ActivityCard'
+import StatsCard from '../components/StatsCard'
 import WorkflowVisualization from '../components/WorkflowVisualization'
 import { useAuthStore } from '../stores/authStore'
 import { useWorkflowStore } from '../stores/workflowStore'
+import {
+  useRecentResumes,
+  useRecentMatches,
+  useRecentInterviews,
+} from '../api/hooks'
 
 // ---------------------------------------------------------------------------
-// Placeholder data — will connect to real API in a later day
+// Helpers
 // ---------------------------------------------------------------------------
 
-const PLACEHOLDER_STATS = [
-  { label: 'Resumes Parsed',      value: '—',   icon: FileText,  color: 'text-indigo-600 bg-indigo-50' },
-  { label: 'JDs Analyzed',        value: '—',   icon: ClipboardList, color: 'text-purple-600 bg-purple-50' },
-  { label: 'Interviews Completed',value: '—',   icon: Users,     color: 'text-green-600  bg-green-50'  },
-  { label: 'Avg Match Score',     value: '—',   icon: TrendingUp, color: 'text-amber-600  bg-amber-50'  },
-]
+function formatDate(iso?: string): string {
+  if (!iso) return '—'
+  try {
+    return new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' }).format(new Date(iso))
+  } catch {
+    return '—'
+  }
+}
 
-const PLACEHOLDER_MATCHES = [
-  { title: 'Software Engineer @ Stripe',      subtitle: '—',          score: undefined, link: '/match/latest' },
-  { title: 'Backend Engineer @ Shopify',      subtitle: '—',          score: undefined, link: '/match/latest' },
-  { title: 'Senior SWE @ Anthropic',          subtitle: '—',          score: undefined, link: '/match/latest' },
-]
-
-const PLACEHOLDER_INTERVIEWS = [
-  { title: 'Software Engineer @ Stripe',   subtitle: '—', status: 'pending', link: '/interview/latest' },
-  { title: 'Backend Engineer @ Shopify',   subtitle: '—', status: 'pending', link: '/interview/latest' },
-]
+function avgScore(scores: number[]): string {
+  if (scores.length === 0) return '—'
+  const avg = scores.reduce((a, b) => a + b, 0) / scores.length
+  return `${Math.round(avg)}`
+}
 
 // ---------------------------------------------------------------------------
 // Quick action card
@@ -54,9 +59,7 @@ function ActionCard({ icon: Icon, title, description, onClick, disabled }: Actio
         <Icon className="h-5 w-5" />
       </div>
       <div>
-        <p className={`text-sm font-semibold ${disabled ? 'text-gray-400' : 'text-gray-900'}`}>
-          {title}
-        </p>
+        <p className={`text-sm font-semibold ${disabled ? 'text-gray-400' : 'text-gray-900'}`}>{title}</p>
         <p className="mt-0.5 text-xs text-gray-500">{description}</p>
       </div>
     </button>
@@ -77,6 +80,28 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 // ---------------------------------------------------------------------------
+// Empty activity state (inline, not full-page)
+// ---------------------------------------------------------------------------
+
+function InlineEmpty({ message, actionLabel, onAction }: {
+  message: string
+  actionLabel: string
+  onAction: () => void
+}) {
+  return (
+    <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 px-4 py-8 text-center">
+      <p className="text-sm text-gray-500">{message}</p>
+      <button
+        onClick={onAction}
+        className="mt-3 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 transition-colors"
+      >
+        {actionLabel}
+      </button>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
@@ -85,14 +110,30 @@ export default function DashboardPage() {
   const user = useAuthStore((s) => s.user)
   const { currentResumeId, currentJDId, currentMatchId, currentInterviewId } = useWorkflowStore()
 
+  const { data: recentResumes,    isLoading: loadingResumes    } = useRecentResumes()
+  const { data: recentMatches,    isLoading: loadingMatches    } = useRecentMatches()
+  const { data: recentInterviews, isLoading: loadingInterviews } = useRecentInterviews()
+
   const hasResumeAndJD = currentResumeId !== null && currentJDId !== null
 
+  // Workflow step progress
   const completedSteps = [
     currentResumeId    ? 'upload'    : null,
     currentJDId        ? 'jd'        : null,
     currentMatchId     ? 'match'     : null,
     currentInterviewId ? 'interview' : null,
   ].filter((s): s is string => s !== null)
+
+  // Derived stats from real data (or workflowStore as fallback)
+  const resumeCount     = recentResumes?.length    ?? (currentResumeId    ? 1 : 0)
+  const interviewsDone  = recentInterviews?.filter((i) => i.status === 'completed').length
+                          ?? (currentInterviewId ? 1 : 0)
+  const matchScores     = recentMatches?.map((m) => m.overallScore) ?? []
+  const avgMatchScore   = matchScores.length > 0 ? avgScore(matchScores) : (currentMatchId ? '—' : '—')
+
+  // Infer JD count from matches (1 JD per match minimum)
+  const jdCount = recentMatches?.length ?? (currentJDId ? 1 : 0)
+
   const firstName = user?.name ?? 'there'
 
   return (
@@ -110,15 +151,41 @@ export default function DashboardPage() {
       {/* Stats */}
       <Section title="Overview">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {PLACEHOLDER_STATS.map(({ label, value, icon: Icon, color }) => (
-            <div key={label} className="rounded-xl border border-gray-200 bg-white p-4">
-              <div className={`mb-3 inline-flex rounded-lg p-2 ${color}`}>
-                <Icon className="h-4 w-4" />
-              </div>
-              <p className="text-2xl font-bold text-gray-900">{value}</p>
-              <p className="mt-0.5 text-xs text-gray-500">{label}</p>
-            </div>
-          ))}
+          <StatsCard
+            icon={FileText}
+            label="Resumes Parsed"
+            value={resumeCount}
+            color="text-indigo-600 bg-indigo-50"
+            loading={loadingResumes}
+          />
+          <StatsCard
+            icon={ClipboardList}
+            label="JDs Analyzed"
+            value={jdCount}
+            color="text-purple-600 bg-purple-50"
+            loading={loadingMatches}
+          />
+          <StatsCard
+            icon={Users}
+            label="Interviews Done"
+            value={interviewsDone}
+            color="text-green-600 bg-green-50"
+            loading={loadingInterviews}
+          />
+          <StatsCard
+            icon={TrendingUp}
+            label="Avg Match Score"
+            value={avgMatchScore}
+            color="text-amber-600 bg-amber-50"
+            loading={loadingMatches}
+            trend={
+              matchScores.length === 0
+                ? undefined
+                : Number(avgMatchScore) >= 70 ? 'up'
+                : Number(avgMatchScore) >= 50 ? 'neutral'
+                : 'down'
+            }
+          />
         </div>
       </Section>
 
@@ -140,11 +207,7 @@ export default function DashboardPage() {
           <ActionCard
             icon={Mic}
             title="Start Interview"
-            description={
-              hasResumeAndJD
-                ? 'Practice with an AI interviewer'
-                : 'Upload resume and JD first'
-            }
+            description={hasResumeAndJD ? 'Practice with an AI interviewer' : 'Upload resume and JD first'}
             onClick={() => navigate('/jd')}
             disabled={!hasResumeAndJD}
           />
@@ -162,46 +225,77 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
         {/* Recent matches */}
         <Section title="Recent Matches">
-          <div className="space-y-2">
-            {PLACEHOLDER_MATCHES.map((item) => (
-              <ActivityCard
-                key={item.title}
-                title={item.title}
-                subtitle={item.subtitle}
-                score={item.score}
-                link={item.link}
-              />
-            ))}
-            <button
-              onClick={() => navigate('/jd')}
-              className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 py-2.5 text-xs font-medium text-gray-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
-            >
-              <BarChart2 className="h-3.5 w-3.5" />
-              Run a new match
-            </button>
-          </div>
+          {loadingMatches ? (
+            <div className="space-y-2">
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="h-14 animate-pulse rounded-lg bg-gray-100" />
+              ))}
+            </div>
+          ) : (recentMatches ?? []).length > 0 ? (
+            <div className="space-y-2">
+              {recentMatches!.map((m) => (
+                <ActivityCard
+                  key={m.id}
+                  title={`Match #${m.id}`}
+                  subtitle={formatDate(m.createdAt)}
+                  score={Math.round(m.overallScore)}
+                  link={`/match/${m.id}`}
+                />
+              ))}
+              <button
+                onClick={() => navigate('/jd')}
+                className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 py-2.5 text-xs font-medium text-gray-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+              >
+                <BarChart2 className="h-3.5 w-3.5" />
+                Run a new match
+              </button>
+            </div>
+          ) : (
+            <InlineEmpty
+              message="No match results yet."
+              actionLabel="Run a match"
+              onAction={() => navigate('/jd')}
+            />
+          )}
         </Section>
 
         {/* Recent interviews */}
         <Section title="Recent Interviews">
-          <div className="space-y-2">
-            {PLACEHOLDER_INTERVIEWS.map((item) => (
-              <ActivityCard
-                key={item.title}
-                title={item.title}
-                subtitle={item.subtitle}
-                status={item.status}
-                link={item.link}
-              />
-            ))}
-            <button
-              onClick={() => navigate('/jd')}
-              className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 py-2.5 text-xs font-medium text-gray-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
-            >
-              <Mic className="h-3.5 w-3.5" />
-              Start a new interview
-            </button>
-          </div>
+          {loadingInterviews ? (
+            <div className="space-y-2">
+              {[0, 1].map((i) => (
+                <div key={i} className="h-14 animate-pulse rounded-lg bg-gray-100" />
+              ))}
+            </div>
+          ) : (recentInterviews ?? []).length > 0 ? (
+            <div className="space-y-2">
+              {recentInterviews!.map((iv) => (
+                <ActivityCard
+                  key={iv.id}
+                  title={`Interview #${iv.id}`}
+                  subtitle={[
+                    formatDate(iv.createdAt),
+                    iv.questionCount ? `${iv.questionCount}Q` : null,
+                  ].filter(Boolean).join(' · ')}
+                  status={iv.status}
+                  link={iv.status === 'completed' ? `/review/${iv.sessionId}` : `/interview/${iv.sessionId}`}
+                />
+              ))}
+              <button
+                onClick={() => navigate('/jd')}
+                className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg border border-dashed border-gray-300 py-2.5 text-xs font-medium text-gray-500 hover:border-indigo-300 hover:text-indigo-600 transition-colors"
+              >
+                <Mic className="h-3.5 w-3.5" />
+                Start a new interview
+              </button>
+            </div>
+          ) : (
+            <InlineEmpty
+              message="No interviews yet."
+              actionLabel="Start an interview"
+              onAction={() => navigate('/jd')}
+            />
+          )}
         </Section>
       </div>
     </div>

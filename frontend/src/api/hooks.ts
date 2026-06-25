@@ -236,3 +236,109 @@ export function useGetInterview(id: string | null) {
     enabled: id !== null,
   })
 }
+
+// ---------------------------------------------------------------------------
+// Recent-activity list hooks
+// These endpoints may not be implemented yet; each falls back to [] on error.
+// ---------------------------------------------------------------------------
+
+export interface ResumeListItem {
+  id: number
+  createdAt?: string
+  parsedData?: Record<string, unknown>
+}
+
+export interface MatchListItem {
+  id: number
+  overallScore: number
+  skillScore?: number
+  experienceScore?: number
+  keywordScore?: number
+  createdAt?: string
+  resumeId?: number
+  jdId?: number
+}
+
+export interface InterviewListItem {
+  id: number
+  sessionId: string
+  status: string
+  createdAt?: string
+  questionCount?: number
+}
+
+export interface AgentRun {
+  id: number
+  agentType: string
+  status: string
+  createdAt?: string
+  durationMs?: number
+}
+
+/** GET /api/resumes/recent — falls back to [] when endpoint is unavailable. */
+export function useRecentResumes() {
+  return useQuery<ResumeListItem[], Error>({
+    queryKey: ['resumes', 'recent'],
+    queryFn: async () => {
+      try {
+        const { data } = await client.get<ResumeListItem[]>('/resumes/recent')
+        return data ?? []
+      } catch {
+        return []
+      }
+    },
+    retry: false,
+    staleTime: 30_000,
+  })
+}
+
+/** GET /api/match/recent — falls back to [] when endpoint is unavailable. */
+export function useRecentMatches() {
+  return useQuery<MatchListItem[], Error>({
+    queryKey: ['matches', 'recent'],
+    queryFn: async () => {
+      try {
+        const { data } = await client.get<MatchListItem[]>('/match/recent')
+        return data ?? []
+      } catch {
+        return []
+      }
+    },
+    retry: false,
+    staleTime: 30_000,
+  })
+}
+
+/** GET /api/interviews/recent — falls back to [] when endpoint is unavailable. */
+export function useRecentInterviews() {
+  return useQuery<InterviewListItem[], Error>({
+    queryKey: ['interviews', 'recent'],
+    queryFn: async () => {
+      try {
+        const { data } = await client.get<InterviewListItem[]>('/interviews/recent')
+        return data ?? []
+      } catch {
+        return []
+      }
+    },
+    retry: false,
+    staleTime: 30_000,
+  })
+}
+
+/** GET /api/agent-runs/recent?limit=10 — falls back to [] when endpoint is unavailable. */
+export function useAgentRuns() {
+  return useQuery<AgentRun[], Error>({
+    queryKey: ['agent-runs', 'recent'],
+    queryFn: async () => {
+      try {
+        const { data } = await client.get<AgentRun[]>('/agent-runs/recent?limit=10')
+        return data ?? []
+      } catch {
+        return []
+      }
+    },
+    retry: false,
+    staleTime: 30_000,
+  })
+}

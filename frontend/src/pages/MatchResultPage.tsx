@@ -1,12 +1,12 @@
 import { useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { FileEdit, MessageSquare, AlertCircle, BarChart2, Loader2 } from 'lucide-react'
+import { FileEdit, MessageSquare, AlertCircle, BarChart2, Loader2, RefreshCw } from 'lucide-react'
 import RadarChart from '../components/RadarChart'
 import ScoreCard from '../components/ScoreCard'
 import GapAnalysis from '../components/GapAnalysis'
 import EmptyState from '../components/EmptyState'
 import PageHeader from '../components/PageHeader'
-import { useGetMatch, useStartInterview } from '../api/hooks'
+import { useGetMatch, useStartInterview, useRewrite } from '../api/hooks'
 import { useWorkflowStore } from '../stores/workflowStore'
 
 // ---------------------------------------------------------------------------
@@ -54,10 +54,9 @@ export default function MatchResultPage() {
   const matchId = id === 'latest' ? null : Number(id)
   const { data, isPending, isError, error } = useGetMatch(matchId)
   const startInterview = useStartInterview()
+  const rewrite = useRewrite()
 
-  // Persist match id to store once when the URL param changes — not on every render.
-  // Using the URL `id` (a stable string) as the dependency avoids an infinite loop
-  // that would occur if we called setMatchId unconditionally during render.
+  // Persist match id to store once when the URL param changes
   useEffect(() => {
     if (matchId) setMatchId(matchId)
   }, [id]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -101,11 +100,22 @@ export default function MatchResultPage() {
   const exp     = Number(data.experienceScore) || 0
   const keyword = Number(data.keywordScore)    || 0
 
-  // ATS data is embedded in the parsed gap object
   const atsMissing = (gap.ats_missing  as string[] | undefined) ?? []
   const atsCov     = Number(gap.ats_coverage_percent) || 0
 
   const needsRewrite = overall < 70
+
+  function handleRewrite() {
+    if (!currentResumeId || !currentJDId) return
+    rewrite.mutate(
+      { resumeId: currentResumeId, jdId: currentJDId, matchResultId: data!.id },
+      {
+        onSuccess: (result) => {
+          navigate(`/rewrite/${result.id}`, { state: { rewriteData: result } })
+        },
+      }
+    )
+  }
 
   function handleStartInterview() {
     if (!currentResumeId || !currentJDId) return
@@ -167,18 +177,48 @@ export default function MatchResultPage() {
         <GapAnalysis gapAnalysis={gap} />
       </section>
 
+      {/* Rewrite error banner */}
+      {rewrite.isError && (
+        <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
+          <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-500" />
+          <div className="flex-1">
+            <p className="text-sm font-medium text-red-800">Rewrite failed</p>
+            <p className="text-xs text-red-600 mt-0.5">
+              {rewrite.error?.message ?? 'Something went wrong. Please try again.'}
+            </p>
+          </div>
+          <button
+            onClick={handleRewrite}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-red-100 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-200 transition-colors"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            Retry
+          </button>
+        </div>
+      )}
+
       {/* Action buttons */}
       <div className="flex flex-col gap-3 sm:flex-row">
         <button
-          onClick={() => navigate(`/rewrite/${data.id}`)}
-          className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold transition-colors ${
+          onClick={handleRewrite}
+          disabled={!currentResumeId || !currentJDId || rewrite.isPending}
+          className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-3 text-sm font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
             needsRewrite
               ? 'bg-indigo-600 text-white hover:bg-indigo-700'
               : 'border border-indigo-300 text-indigo-700 hover:bg-indigo-50'
           }`}
         >
-          <FileEdit className="h-4 w-4" />
-          {needsRewrite ? 'Rewrite Resume (Recommended)' : 'Rewrite Resume'}
+          {rewrite.isPending ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Rewriting resume… This may take up to 60 seconds
+            </>
+          ) : (
+            <>
+              <FileEdit className="h-4 w-4" />
+              {needsRewrite ? 'Rewrite Resume (Recommended)' : 'Rewrite Resume'}
+            </>
+          )}
         </button>
 
         <button

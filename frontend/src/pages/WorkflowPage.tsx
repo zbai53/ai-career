@@ -3,6 +3,7 @@ import {
   FileUp, ClipboardList, BarChart2, FileEdit, MessageSquare, Trophy,
   CheckCircle2, ChevronRight, GitBranch,
 } from 'lucide-react'
+import PageHeader from '../components/PageHeader'
 import WorkflowVisualization from '../components/WorkflowVisualization'
 import EmptyState from '../components/EmptyState'
 import { useWorkflowStore } from '../stores/workflowStore'
@@ -31,12 +32,10 @@ export default function WorkflowPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-gray-900">Workflow</h1>
-        <p className="mt-1 text-sm text-gray-500">
-          Your AI career pipeline — from resume to interview readiness.
-        </p>
-      </div>
+      <PageHeader
+        title="Workflow"
+        subtitle="Your AI career pipeline — from resume to interview readiness."
+      />
 
       {/* Graph */}
       <div

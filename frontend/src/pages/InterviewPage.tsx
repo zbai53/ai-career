@@ -373,8 +373,35 @@ export default function InterviewPage() {
 
   if (loadingSession || !sessionData) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+      <div className="flex h-[calc(100vh-4rem)] flex-col">
+        {/* Skeleton top bar */}
+        <div className="flex shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-4 py-3 animate-pulse">
+          <div className="flex-1 space-y-1.5">
+            <div className="h-4 w-40 rounded bg-gray-200" />
+            <div className="h-3 w-28 rounded bg-gray-100" />
+          </div>
+          <div className="h-7 w-24 rounded-lg bg-gray-200" />
+        </div>
+        {/* Skeleton chat */}
+        <div className="flex-1 space-y-4 overflow-y-auto bg-gray-50 px-4 py-6 animate-pulse">
+          <div className="flex items-end gap-2">
+            <div className="h-7 w-7 rounded-full bg-gray-200 shrink-0" />
+            <div className="h-16 w-64 rounded-2xl rounded-bl-none bg-gray-200" />
+          </div>
+          <div className="flex items-end gap-2 flex-row-reverse">
+            <div className="h-7 w-7 rounded-full bg-indigo-200 shrink-0" />
+            <div className="h-10 w-48 rounded-2xl rounded-br-none bg-indigo-100" />
+          </div>
+          <div className="flex items-end gap-2">
+            <div className="h-7 w-7 rounded-full bg-gray-200 shrink-0" />
+            <div className="h-20 w-72 rounded-2xl rounded-bl-none bg-gray-200" />
+          </div>
+        </div>
+        {/* Skeleton input */}
+        <div className="shrink-0 border-t border-gray-200 bg-white px-4 py-3 animate-pulse">
+          <div className="h-20 w-full rounded-xl bg-gray-100" />
+          <div className="mt-2 h-9 w-full rounded-lg bg-gray-200" />
+        </div>
       </div>
     )
   }
