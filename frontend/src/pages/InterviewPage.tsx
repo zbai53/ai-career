@@ -259,7 +259,9 @@ export default function InterviewPage() {
 
     if (fromAnswer) {
       const newHistory = parsed.conversation_history ?? []
-      const newAnswers = parsed.answers ?? []
+      // The Python /answer response returns `evaluation` at the top level (not in an `answers`
+      // array). Extract it here to attach to the new interviewer turn in the display.
+      const turnEval = updated.evaluation as Record<string, unknown> | undefined
 
       setDisplayMessages((prev) => {
         // prev ends with the one optimistic candidate message we appended during submit.
@@ -270,25 +272,25 @@ export default function InterviewPage() {
         // Turns incoming from the API that we don't yet have displayed
         const incoming = newHistory.slice(preOptimisticCount)
 
-        let candidateCount = kept.filter((m) => m.role === 'candidate').length
+        // Attach the evaluation from this turn to the first new interviewer message only
+        let evaluationAttached = false
         const appended: DisplayMessage[] = incoming.map((turn) => {
           if (turn.role === 'candidate') {
-            candidateCount++
             return { role: 'candidate' as const, content: turn.content }
           }
-          const evalIdx = candidateCount - 1
-          const ev = evalIdx >= 0 ? newAnswers[evalIdx] : undefined
+          const ev = !evaluationAttached ? turnEval : undefined
+          evaluationAttached = true
           return {
             role: 'interviewer' as const,
             content: turn.content,
             evaluation: ev
               ? {
-                  relevance_score:     ev.relevance_score,
-                  depth_score:         ev.depth_score,
-                  communication_score: ev.communication_score,
-                  overall_score:       ev.overall_score,
-                  strengths:           ev.strengths    ?? [],
-                  improvements:        ev.improvements ?? [],
+                  relevance_score:     Number(ev.relevance_score)     || 0,
+                  depth_score:         Number(ev.depth_score)         || 0,
+                  communication_score: Number(ev.communication_score) || 0,
+                  overall_score:       Number(ev.overall_score)       || 0,
+                  strengths:           (ev.strengths    as string[])  ?? [],
+                  improvements:        (ev.improvements as string[])  ?? [],
                 }
               : undefined,
           }
@@ -338,7 +340,8 @@ export default function InterviewPage() {
     endMutation.mutate(undefined, {
       onSuccess: (data) => {
         handleMutationSuccess(data, false)
-        navigate(`/review/${id}`)   // id is the UUID from URL params
+        // Pass the full end response to ReviewPage so it doesn't need a separate GET fetch
+        navigate(`/review/${id}`, { state: { endData: data } })
       },
     })
   }
