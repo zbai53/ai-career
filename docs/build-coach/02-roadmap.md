@@ -156,8 +156,8 @@
 
 > Turn the code into a career asset.
 
-- [ ] **Day 42:** GDPR/PIPEDA compliance implementation: PII placeholder substitution before LLM calls, encrypted resume storage (AES-256), 24h auto-expiry on raw files, `DELETE /api/users/me/data` endpoint for right-to-erasure.
-- [ ] **Day 43:** README rewrite (EN + CN): project motivation (your story!), feature screenshots + GIFs, architecture diagram, quick start guide, tech stack table. Deploy: Railway (backend + agent-service), Vercel (frontend), Qdrant Cloud (free tier).
+- [x] **Day 42:** GDPR/PIPEDA compliance implementation: PII placeholder substitution before LLM calls, encrypted resume storage (AES-256), 24h auto-expiry on raw files, `DELETE /api/users/me/data` endpoint for right-to-erasure.
+- [x] **Day 43:** README rewrite (EN + CN): project motivation (your story!), feature screenshots + GIFs, architecture diagram, quick start guide, tech stack table. Deploy: Railway (backend + agent-service), Vercel (frontend), Qdrant Cloud (free tier).
 - [ ] **Day 44:** Record 3-minute demo video. Show the full flow: upload resume → paste JD → see match score → get rewrite → do mock interview → see review. Highlight the workflow visualization. Upload to YouTube + Bilibili.
 - [ ] **Day 45:** Update resume (EN + CN versions). Update LinkedIn. Write one "build in public" post. Prepare interview talking points. Celebrate. 🎉
 

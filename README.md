@@ -164,11 +164,39 @@ npm run dev
 
 ---
 
+## Project Stats
+
+> `wc -l` counts as of 2026-06-26.
+
+| Metric | Count |
+|--------|-------|
+| Python LOC (`agent-service/app/`) | 7,600 |
+| Java LOC (`backend/src/`) | 3,231 |
+| TypeScript / TSX LOC (`frontend/src/`) | 5,109 |
+| **Total LOC** | **15,940** |
+| Python tests (pytest) | 211 |
+| Spring Boot tests (Maven) | 14 |
+| **Total tests** | **225** |
+| React components | 22 |
+| React pages | 10 |
+| REST API endpoints | 41 (21 agent-service + 20 Spring Boot) |
+| Docker services | 7 (postgres, redis, qdrant, minio, backend, agent-service, frontend) |
+
+---
+
 ## API Documentation
 
 Full endpoint reference: [`docs/schemas/api-endpoints.md`](docs/schemas/api-endpoints.md)
 
 Schema definitions: [`docs/schemas/resume-schema.md`](docs/schemas/resume-schema.md) · [`docs/schemas/jd-schema.md`](docs/schemas/jd-schema.md)
+
+---
+
+## Deployment
+
+Step-by-step guide for local dev, Docker Compose, Railway, AWS, and Vercel: [`docs/deployment.md`](docs/deployment.md)
+
+3-minute demo script for walkthroughs and interviews: [`docs/demo-script.md`](docs/demo-script.md)
 
 ---
 
