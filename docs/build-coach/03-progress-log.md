@@ -5,6 +5,21 @@
 
 ---
 
+## Day 42 — 2025-06-24 (Phase 7: Polish + Deploy)
+
+**Completed:**
+- PII masking: PiiMasker class replaces name/email/phone/address with placeholders before Claude calls, restores after
+- Integrated PII masking into ResumeAgent and RewriteAgent
+- Data deletion: DELETE /api/users/me/data cascades through all tables (GDPR/PIPEDA right-to-erasure)
+- Dockerfiles for all 3 services: multi-stage builds, optimized image sizes
+- nginx.conf for frontend with SPA routing and API proxy
+- Updated docker-compose.yml with all services
+- Professional README with motivation story, architecture diagram, 6 agents table, tech stack, quick start
+
+**Blockers:** None
+
+**Next:** Day 43 — Deploy to cloud, screenshots, demo preparation
+
 ## Day 41 — 2025-06-24 (Phase 6: React Frontend)
 
 **Completed:**
