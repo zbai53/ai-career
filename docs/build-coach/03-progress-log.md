@@ -5,6 +5,19 @@
 
 ---
 
+## Day 43 — 2025-06-25 (Phase 7: Polish + Deploy)
+
+**Completed:**
+- Created screenshot capture guide with step-by-step instructions for 8 screens
+- Created demo data setup script for populating app with sample data
+- Created comprehensive deployment guide: local dev, Docker Compose, Railway, AWS, Vercel
+- Created 3-minute demo script with timing for each feature
+- Updated project summary with final code stats (LOC, test counts, component counts)
+- Updated README with project stats and documentation links
+**Blockers:** None
+
+**Next:** Day 44 — Record demo video, take screenshots, deploy if time permitss
+
 ## Day 42 — 2025-06-24 (Phase 7: Polish + Deploy)
 
 **Completed:**
