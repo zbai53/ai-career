@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from app.agents.prompt_templates import RESUME_PARSE_SYSTEM_PROMPT, RESUME_PARSE_USER_PROMPT
 from app.models.resume import ParsedResume
 from app.utils.agent_logger import log_agent_run
+from app.utils.pii_masker import PiiMasker
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class ResumeAgent:
             raise EnvironmentError("ANTHROPIC_API_KEY is not set")
         self._client = anthropic.Anthropic(api_key=api_key)
         self._token_count: int = 0
+        self._pii_masker = PiiMasker()
 
     # ------------------------------------------------------------------
     # Public API
@@ -191,8 +193,15 @@ class ResumeAgent:
     # Claude interaction
     # ------------------------------------------------------------------
 
-    def _call_claude(self, raw_text: str, strict: bool) -> ParsedResume:
-        user_content = RESUME_PARSE_USER_PROMPT.format(resume_text=raw_text)
+    def _call_claude(self, raw_text: str, strict: bool, pii_mapping: dict | None = None) -> ParsedResume:
+        # Mask PII on the first attempt; subsequent retries reuse the same mapping
+        # so the mapping is built only once per parse() call.
+        if pii_mapping is None:
+            masked_text, pii_mapping = self._pii_masker.mask(raw_text)
+        else:
+            masked_text = raw_text  # already masked by the first attempt
+
+        user_content = RESUME_PARSE_USER_PROMPT.format(resume_text=masked_text)
         if strict:
             user_content += _RETRY_SUFFIX
 
@@ -224,7 +233,9 @@ class ResumeAgent:
             ).strip()
 
         try:
-            data = json.loads(raw_json)
+            # Unmask PII in Claude's JSON response before validation
+            unmasked_json = PiiMasker.unmask(raw_json, pii_mapping)
+            data = json.loads(unmasked_json)
             # Ensure raw_text is the actual extracted text, not a truncated summary
             data["raw_text"] = raw_text
             return ParsedResume.model_validate(data)
@@ -234,4 +245,5 @@ class ResumeAgent:
                     f"Claude response failed validation after retry: {exc}\n\nResponse:\n{raw_json}"
                 ) from exc
             logger.warning("Initial parse failed (%s), retrying with stricter prompt", exc)
-            return self._call_claude(raw_text, strict=True)
+            # Pass the mapping so we don't re-mask on retry
+            return self._call_claude(raw_text, strict=True, pii_mapping=pii_mapping)

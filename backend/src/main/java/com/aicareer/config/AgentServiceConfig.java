@@ -27,12 +27,12 @@ public class AgentServiceConfig {
         return new RestTemplate(factory);
     }
 
-    /** RestTemplate with a 60-second read timeout for calls that invoke Claude. */
+    /** RestTemplate with a 120-second read timeout for calls that invoke Claude. */
     @Bean("agentRestTemplate")
     public RestTemplate agentRestTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(60_000);
+        factory.setReadTimeout(120_000);
         return new RestTemplate(factory);
     }
 
@@ -49,14 +49,14 @@ public class AgentServiceConfig {
     }
 
     /**
-     * RestTemplate with a 90-second read timeout for rewrite calls that include
+     * RestTemplate with a 120-second read timeout for rewrite calls that include
      * a Claude rewrite pass plus fidelity checking (and a possible retry).
      */
     @Bean("rewriteRestTemplate")
     public RestTemplate rewriteRestTemplate() {
         SimpleClientHttpRequestFactory factory = new SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(10_000);
-        factory.setReadTimeout(90_000);
+        factory.setReadTimeout(120_000);
         return new RestTemplate(factory);
     }
 }

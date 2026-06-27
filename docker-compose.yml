@@ -35,6 +35,36 @@ services:
     volumes:
       - minio_data:/data
 
+  agent-service:
+    build:
+      context: ./agent-service
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./agent-service/.env
+    depends_on:
+      - qdrant
+      - redis
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8080:8080"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - postgres
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+
 volumes:
   pgdata:
   qdrant_data:

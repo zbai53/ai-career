@@ -22,6 +22,7 @@ from app.models.rewrite_result import (
     RewrittenExperience,
 )
 from app.utils.agent_logger import log_agent_run
+from app.utils.pii_masker import PiiMasker
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +260,7 @@ class RewriteAgent:
         self._client = anthropic.Anthropic(api_key=api_key)
         self._token_count: int = 0
         self._fidelity_checker = fidelity_checker or FidelityChecker()
+        self._pii_masker = PiiMasker()
 
     # ------------------------------------------------------------------
     # Public API
@@ -490,11 +492,23 @@ class RewriteAgent:
         """
         Call Claude to rewrite bullets for a single experience entry.
         Retries once with a stricter prompt on JSON parse failure.
+
+        PII masking: bullets are masked before building the prompt and the
+        raw JSON response is unmasked before being parsed and returned.
         """
+        # Build a single string from all bullets, mask PII, then reconstruct
+        bullets_joined = "\n".join(bullets)
+        masked_bullets_joined, pii_mapping = self._pii_masker.mask(bullets_joined)
+        masked_bullets = masked_bullets_joined.splitlines()
+        # Pad/trim if masking changed the line count (shouldn't happen, but be safe)
+        while len(masked_bullets) < len(bullets):
+            masked_bullets.append(bullets[len(masked_bullets)])
+        masked_bullets = masked_bullets[: len(bullets)]
+
         user_content = _build_user_prompt(
             company=company,
             title=title,
-            bullets=bullets,
+            bullets=masked_bullets,
             jd_title=jd_title,
             missing_skills=missing_skills,
             jd_keywords=jd_keywords,
@@ -536,6 +550,8 @@ class RewriteAgent:
                         line for line in raw.splitlines() if not line.startswith("```")
                     ).strip()
 
+                # Restore PII placeholders before parsing
+                raw = PiiMasker.unmask(raw, pii_mapping)
                 data = json.loads(raw)
                 if "rewritten_bullets" not in data:
                     raise ValueError("Missing key: rewritten_bullets")

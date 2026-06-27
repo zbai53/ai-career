@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.NoSuchElementException;
 
@@ -86,25 +87,43 @@ public class InterviewController {
     // GET /api/interviews/{sessionId}
     // -------------------------------------------------------------------------
 
+    /**
+     * Proxies to the Python agent service to retrieve the current session state.
+     * The DB lookup is attempted afterwards to enrich the response with metadata,
+     * but it is NOT a prerequisite — the Python service is the source of truth for
+     * in-memory session state.
+     *
+     * This avoids two failure modes present in the original design:
+     *   1. findBySessionId returning null (race condition / timing) → 404 before
+     *      the Python service is ever contacted.
+     *   2. Map.of() throwing NullPointerException when endedAt is null for active
+     *      sessions, turning a valid request into a 500.
+     */
     @GetMapping("/{sessionId}")
     public ResponseEntity<Object> status(@PathVariable String sessionId) {
-        InterviewSession session = interviewSessionMapper.findBySessionId(sessionId);
-        if (session == null) {
-            return ResponseEntity.notFound().build();
-        }
-        log.info("GET /api/interviews/{} — dbId={}", sessionId, session.getId());
+        log.info("GET /api/interviews/{}", sessionId);
         try {
             String agentResponse = agentServiceClient.getInterviewStatus(sessionId);
             JsonNode agentState  = objectMapper.readTree(agentResponse);
-            return ResponseEntity.ok(Map.of(
-                    "db_id",          session.getId(),
-                    "session_id",     sessionId,
-                    "status",         session.getStatus(),
-                    "question_count", session.getQuestionCount(),
-                    "started_at",     session.getStartedAt(),
-                    "ended_at",       session.getEndedAt(),
-                    "agent_state",    agentState
-            ));
+
+            // Build response with LinkedHashMap so null values (e.g. endedAt) are safe
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("session_id",  sessionId);
+            response.put("agent_state", agentState);
+
+            // Enrich with DB metadata when available — not required for core functionality
+            InterviewSession dbSession = interviewSessionMapper.findBySessionId(sessionId);
+            if (dbSession != null) {
+                log.info("GET /api/interviews/{} — enriched with dbId={}", sessionId, dbSession.getId());
+                response.put("db_id",          dbSession.getId());
+                response.put("status",         dbSession.getStatus());
+                response.put("question_count", dbSession.getQuestionCount());
+                response.put("started_at",     String.valueOf(dbSession.getStartedAt()));
+                response.put("ended_at",       dbSession.getEndedAt() != null
+                                               ? String.valueOf(dbSession.getEndedAt()) : null);
+            }
+
+            return ResponseEntity.ok(response);
         } catch (Exception e) {
             log.error("Interview status failed (sessionId={}): {}", sessionId, e.getMessage());
             return ResponseEntity.internalServerError().body(Map.of("error", e.getMessage()));

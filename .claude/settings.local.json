@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mvn wrapper:wrapper -Dmaven=3.9.6)",
+      "Bash(curl:*)",
+      "Bash(kill 87543 87666)",
+      "Bash(./mvnw clean:*)",
+      "Bash(./mvnw spring-boot:run)",
+      "Bash(echo \"PID=$!\")",
+      "Bash(./mvnw test:*)",
+      "Bash(docker-compose:*)",
+      "Bash(pip show:*)",
+      "Bash(python:*)",
+      "Bash(PYTHONPATH=. python:*)",
+      "Bash(python3:*)",
+      "Bash(docker exec ai-career-postgres-1:*)",
+      "Bash(npm run:*)"
+    ]
+  }
+}

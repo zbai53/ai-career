@@ -1,6 +1,7 @@
 package com.aicareer.mapper;
 
 import com.aicareer.model.entity.InterviewSession;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
@@ -37,4 +38,7 @@ public interface InterviewSessionMapper {
                    @Param("endedAt") LocalDateTime endedAt,
                    @Param("review") String review,
                    @Param("conversation") String conversation);
+
+    @Delete("DELETE FROM interview_sessions WHERE user_id = #{userId}")
+    int deleteByUserId(Long userId);
 }

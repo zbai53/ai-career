@@ -27,6 +27,7 @@ public class SecurityConfig {
                 .requestMatchers("/api/workflow/**").permitAll()
                 .requestMatchers("/api/rewrite/**").permitAll()
                 .requestMatchers("/api/interviews/**").permitAll()
+                .requestMatchers("/api/users/**").permitAll()
                 // TODO: lock down endpoints once authentication is implemented
                 .anyRequest().permitAll()
             );
