@@ -1,188 +1,170 @@
-# 3-Minute Demo Script
+# Demo Video Script — AI Career Assistant
 
-A structured walkthrough for showing AI Career to interviewers, recruiters, or potential collaborators.
-Total runtime: ~3 minutes. Each section has a suggested talking time.
+A word-for-word video recording script for a 3-minute demo.
+Total runtime: ~3:00. Timestamps are targets, not hard stops.
 
-**Setup before you start:**
+**Setup before recording:**
 - Run `bash docs/screenshots/demo-data-setup.sh` to pre-populate data
-- Open Chrome at `http://localhost:3000` (or your deployed URL)
-- Have a PDF resume ready for the live upload
-- Keep DevTools closed — full browser window looks cleaner
+- Open Chrome at `http://localhost:3000` (or your deployed URL), fullscreen
+- Have a PDF resume ready for the live drag-and-drop
+- Close DevTools, notifications, and all other apps
+- Record with QuickTime Player: **File → New Screen Recording → 1280×800**
+- Upload finished recording to **YouTube (Unlisted)** and **Bilibili**, then add both links to README.md
 
 ---
 
-## Overview (15 seconds)
+## 0:00 – 0:15 | Intro
 
-**What to show:** Dashboard
+**Show:** Dashboard
 
-**What to say:**
+**Say (verbatim):**
 
-> "This is AI Career — a multi-agent job search assistant I built from scratch. It takes your resume and a job posting, and in about 2 minutes walks you through matching, targeted rewriting, and a full mock interview. Let me show you the full loop."
-
-**Navigate to:** `http://localhost:3000`
-
-Point out:
-- The workflow progress steps in the sidebar (Upload → JD → Match → Interview)
-- Stats cards showing data from previous runs
-- Recent activity feed
+> "Hi, I'm Bai. I built AI Career — a multi-agent system that automates the job search workflow from resume optimization to mock interviews. Let me show you how it works."
 
 ---
 
-## Step 1 — Resume Upload (30 seconds)
+## 0:15 – 0:40 | Resume Upload
 
-**What to show:** Upload page → parse result
-
-**What to say:**
-
-> "First, upload your resume. I support PDF and DOCX. The Resume Agent sends it to Claude, which extracts your name, work history, skills, and education into structured JSON."
+**Show:** Upload page → parsed result
 
 **Do:**
 1. Click "Upload Resume" in the sidebar
-2. Drag a PDF onto the upload zone (or click to browse)
-3. Wait ~3–5 seconds for the parse result to appear
-4. Point at the parsed name, skills section, and experience count
+2. Drag and drop a PDF resume onto the upload zone
+3. Wait ~3–5 s for the parse result to appear
+4. Point at the parsed name, skills list, and education
 
-> "Notice it pulled out skills, job titles, and dates automatically — no manual tagging. It also masks PII before sending to the model, so your personal details never leave the device in raw form."
+**Say:**
+
+> "Our Resume Agent uses Claude to extract structured data from any PDF format — name, work history, skills, education. Notice it pulled all of this out automatically with no manual tagging."
 
 **Navigate to:** `http://localhost:3000/upload`
 
 ---
 
-## Step 2 — JD Input (20 seconds)
+## 0:40 – 1:00 | JD Input
 
-**What to show:** JD input page → parsed result
-
-**What to say:**
-
-> "Next, paste a job description — or give it a URL and the JD Agent scrapes and parses it. It extracts the title, required skills, preferred skills, and seniority level."
+**Show:** JD input page → parsed result
 
 **Do:**
 1. Click "Input JD" in the sidebar
-2. Paste a job description (or type a URL and click Fetch)
+2. Paste a real job description into the text area
 3. Click Parse
-4. Point at the required skills badges and the job title
+4. Point at the required skills badges, preferred skills, and salary range
+
+**Say:**
+
+> "The JD Agent identifies exactly what the employer is looking for — required vs. preferred skills, seniority level, and compensation range. This is what the resume gets scored against."
 
 **Navigate to:** `http://localhost:3000/jd`
 
 ---
 
-## Step 3 — Match Results (30 seconds)
+## 1:00 – 1:25 | Match Scoring
 
-**What to show:** Match results page with radar chart
-
-**What to say:**
-
-> "Now the Match Agent scores your resume against the JD across six dimensions: skills, experience, keywords, seniority, education, and culture fit. You get an overall score and a radar chart so you can see exactly where the gaps are."
+**Show:** Match results page with radar chart and gap analysis
 
 **Do:**
-1. Click "Run Match" — or navigate to the pre-run match from the script
+1. Click "Run Match" (or use the pre-run result from the setup script)
 2. Let the radar chart animate in
-3. Point at the overall score (e.g. "72%")
-4. Hover over a dimension on the radar chart
+3. Point at the overall score
+4. Scroll down to the gap analysis section
 
-> "Here I'm missing Kafka and Kubernetes — required skills I haven't listed. The gap analysis below tells me exactly what to add or highlight. And if the score is below 70, the system automatically triggers a rewrite."
+**Say:**
+
+> "The Match Agent scores your fit across skills, experience, and keywords — no more guessing. The radar chart shows exactly where you're strong and where the gaps are. Here I can see I'm missing a couple of required keywords, and the gap analysis below tells me exactly what to address before applying."
 
 **Navigate to:** `http://localhost:3000/match/<match_id>`
 
 ---
 
-## Step 4 — Resume Rewrite (30 seconds)
+## 1:25 – 1:50 | Resume Rewrite
 
-**What to show:** Rewrite comparison page
-
-**What to say:**
-
-> "This is the part that took the most engineering effort. The Rewrite Agent rewrites each bullet point to better match the JD — and here's the key: it has a fidelity checker that verifies nothing was hallucinated."
+**Show:** Rewrite page with side-by-side bullet comparison and fidelity badge
 
 **Do:**
-1. Navigate to the rewrite result (or click "Rewrite Resume" from the match page and wait)
-2. Point at a before/after bullet pair
-3. Point at the fidelity badge (green "Passed")
+1. Click "Rewrite Resume" (or navigate to the pre-run rewrite result)
+2. Point at a before/after bullet pair — scroll slowly so both are visible
+3. Point at the green fidelity badge
 
-> "See how it changed 'Built REST API using Java' to something that speaks the JD's language — distributed systems, high availability. But it only uses what was actually in my original resume. The fidelity score here is 0.95 — it passed on the first attempt. If it failed, the agent retries with the flagged entities listed explicitly in the prompt."
+**Say:**
 
-> "It also injects missing ATS keywords and shows you exactly which action verbs were strengthened."
+> "The Rewrite Agent optimizes your bullets for this specific JD. But here's what makes it different — there's a fidelity checker that prevents hallucination. It uses dual entity extraction — regex plus Claude NER — to verify every claim in the rewritten bullet was actually in your original resume. It won't claim you did something you didn't. If the fidelity score drops below 0.90, the agent retries with the flagged entities explicitly listed in the prompt."
 
 **Navigate to:** `http://localhost:3000/rewrite/<rewrite_id>`
 
 ---
 
-## Step 5 — Mock Interview (30 seconds)
+## 1:50 – 2:25 | Mock Interview
 
-**What to show:** Interview chat page mid-conversation
-
-**What to say:**
-
-> "After rewriting, the system can drop you straight into a mock interview. The Interview Agent uses RAG over your resume and the JD to generate targeted questions — 60% technical, 40% behavioral, matching your target role."
+**Show:** Interview chat with a question, answer, evaluation, and follow-up
 
 **Do:**
-1. Navigate to the interview session from the script (or click "Practice Interview" from the rewrite page)
-2. Show the chat UI with the first question visible
+1. Navigate to the interview session (or click "Practice Interview" from the rewrite page)
+2. Show the first question in the chat UI
 3. Type a short answer and submit
-4. Point at the follow-up question that appears
+4. Point at the real-time evaluation score that appears
+5. Show the follow-up question the agent asks
 
-> "If your answer lacked depth, it probes with a follow-up. If you were off-topic, it re-asks. After all questions are answered, the Coach Agent runs a full review."
+**Say:**
+
+> "The Interview Agent retrieves relevant questions from a 200+ question bank using RAG — semantic search over Qdrant so the questions actually match this JD and your background. It evaluates your answers in real-time using the STAR framework, and asks follow-ups when you're too vague. Watch — I gave a high-level answer and it probed for specifics."
 
 **Navigate to:** `http://localhost:3000/interview/<session_id>`
 
 ---
 
-## Step 6 — Coach Review (20 seconds)
+## 2:25 – 2:45 | Workflow Visualization
 
-**What to show:** Review page with scores and STAR analysis
-
-**What to say:**
-
-> "The Coach Agent gives you STAR-based feedback on every answer — did you set the situation, describe your task, explain your actions, quantify the result? You get a readiness badge and a list of topics to focus on before the real interview."
-
-**Do:**
-1. Navigate to the review page
-2. Point at the readiness badge (e.g. "Almost Ready" or "Ready")
-3. Point at one per-question score row
-4. Scroll to the strengths/improvements section
-
-**Navigate to:** `http://localhost:3000/review/<session_id>`
-
----
-
-## Wrap-up (15 seconds)
-
-**What to show:** Workflow visualization page
-
-**What to say:**
-
-> "Under the hood, this is a LangGraph workflow with conditional routing — it matches, decides whether to rewrite, runs the interview, and reviews. Each node is a separate agent with its own prompt, retry logic, and fidelity checks. Every Claude call is logged to a database so I can track token usage and latency across the full pipeline."
+**Show:** React Flow workflow page
 
 **Do:**
 1. Navigate to `/workflow`
-2. Point at the node graph — completed nodes, routing edges
+2. Pan slowly across the node graph
+3. Point at the conditional routing edge between Match and Rewrite
 
-> "The whole stack is open source: React frontend, Java Spring Boot backend, Python FastAPI agent service, Qdrant for vector search. Total cost per full run is about a cent."
+**Say:**
+
+> "Under the hood, 6 agents are orchestrated by a LangGraph state machine with conditional routing — a low match score triggers a rewrite loop before the interview starts. Each node has its own retry logic and prompt. Every Claude call is logged to a database so I can track token usage and latency across the full pipeline."
 
 **Navigate to:** `http://localhost:3000/workflow`
 
 ---
 
-## Timing Summary
+## 2:45 – 3:00 | Closing
 
-| Step | Feature | Time |
-|------|---------|------|
-| 0 | Overview — Dashboard | 0:15 |
-| 1 | Resume Upload + Parse | 0:30 |
-| 2 | JD Input + Parse | 0:20 |
-| 3 | Match + Radar Chart | 0:30 |
-| 4 | Resume Rewrite + Fidelity | 0:30 |
-| 5 | Mock Interview (RAG) | 0:30 |
-| 6 | Coach Review (STAR) | 0:20 |
-| 7 | Wrap-up + Workflow Viz | 0:15 |
-| **Total** | | **~3:10** |
+**Show:** Workflow page or Dashboard
+
+**Say:**
+
+> "Built with Spring Boot, FastAPI, LangGraph, React, and Qdrant. The system includes PII anonymization, fidelity checking, and full observability. This is AI Career — turning hours of job search preparation into 30 minutes."
 
 ---
 
-## Tips
+## Timing Summary
 
-- **If a step is slow:** "The first call is slower because the model is cold-starting — in production I'd pre-warm the endpoints." Keep moving, don't wait.
-- **If something fails live:** Navigate to the pre-populated data from `demo-data-setup.sh`. The script exists precisely for this.
-- **For a 5-minute version:** Expand Steps 4 and 5 — show a live rewrite call and type a real answer into the interview.
-- **For a 1-minute version:** Dashboard → Match radar chart → Rewrite comparison → Review badge. Skip live calls entirely, use pre-populated data.
-- **Biggest talking points:** The fidelity checker (anti-hallucination), the LangGraph conditional routing, and the cost (~$0.01 per full run). These tend to get the most follow-up questions.
+| Timestamp | Section | Duration |
+|-----------|---------|----------|
+| 0:00 – 0:15 | Intro | 15 s |
+| 0:15 – 0:40 | Resume Upload | 25 s |
+| 0:40 – 1:00 | JD Input | 20 s |
+| 1:00 – 1:25 | Match Scoring | 25 s |
+| 1:25 – 1:50 | Resume Rewrite | 25 s |
+| 1:50 – 2:25 | Mock Interview | 35 s |
+| 2:25 – 2:45 | Workflow Visualization | 20 s |
+| 2:45 – 3:00 | Closing | 15 s |
+| **Total** | | **~3:00** |
+
+---
+
+## Recording Tips
+
+- **Resolution:** 1280×800 via QuickTime Player → File → New Screen Recording → select window
+- **Upload:** YouTube (Unlisted) + Bilibili; add both URLs to the video links section in `README.md`
+- **If a step is slow:** Say "The first call is slower — the model is loading" and keep moving. Don't wait on screen.
+- **If something fails live:** Use the pre-populated data from `demo-data-setup.sh` — have the IDs from the script output ready in a sticky note.
+- **Key talking points that get follow-up questions:** the fidelity checker (anti-hallucination), the LangGraph conditional routing, and cost (~$0.01 per full run).
+
+## Alternate Lengths
+
+- **1-minute cut:** Dashboard → Match radar chart → Rewrite comparison. Skip live calls, use pre-populated data.
+- **5-minute cut:** Expand the Interview section — type a real 3-sentence answer and walk through the STAR evaluation feedback line by line.
