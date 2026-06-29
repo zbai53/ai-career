@@ -5,6 +5,18 @@
 
 ---
 
+## Day 44 — 2025-06-25 (Phase 7: Polish + Deploy)
+
+**Completed:**
+- Final end-to-end verification: all 8 pages working, full flow tested
+- Generated resume bullet points (EN + CN) ready to paste into resume
+- Created detailed 3-minute demo video script with timing and talking points
+- Recording tips: QuickTime, 1280x800, YouTube + Bilibili
+
+**Blockers:** None
+
+**Next:** Day 45 — Final day: record demo, update resume, LinkedIn post, celebrate 🎉
+
 ## Day 43 — 2025-06-25 (Phase 7: Polish + Deploy)
 
 **Completed:**
